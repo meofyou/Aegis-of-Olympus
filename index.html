@@ -18,48 +18,11 @@
       </div>
       <div id="tips">
         <p><b>이동</b>: WASD | <b>달리기</b>: Shift</p>
-        <p><b>공격</b>: J 또는 마우스 좌클릭 | <b>재시작</b>: R</p>
+        <p><b>약공격</b>: 좌클릭 짧게/J | <b>강공격</b>: 좌클릭 길게(홀드) | <b>재시작</b>: R</p>
       </div>
       <div id="status">전투 시작</div>
     </div>
 
-    <script>
-      (function loadThreeWithFallback() {
-        const sources = [
-          "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.min.js",
-          "https://cdn.jsdelivr.net/npm/three/build/three.min.js",
-          "https://unpkg.com/three/build/three.min.js",
-        ];
-
-        let index = 0;
-
-        function loadNext() {
-          if (index >= sources.length) {
-            const status = document.getElementById("status");
-            if (status) {
-              status.textContent =
-                "Three.js CDN 로드 실패. 네트워크/VPN/방화벽 설정 확인 후 새로고침해 주세요.";
-            }
-            return;
-          }
-
-          const script = document.createElement("script");
-          script.src = sources[index];
-          script.onload = function () {
-            const main = document.createElement("script");
-            main.src = "./main.js";
-            main.defer = true;
-            document.body.appendChild(main);
-          };
-          script.onerror = function () {
-            index += 1;
-            loadNext();
-          };
-          document.head.appendChild(script);
-        }
-
-        loadNext();
-      })();
-    </script>
+    <script type="module" src="./main.js"></script>
   </body>
 </html>

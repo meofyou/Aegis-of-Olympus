@@ -1,13 +1,6 @@
-if (!window.THREE) {
-  const status = document.getElementById("status");
-  if (status) {
-    status.textContent =
-      "Three.js 로드 실패. 인터넷 연결 확인 후 새로고침하거나 로컬 서버로 실행해 주세요.";
-  }
-  throw new Error("THREE global not found");
-}
+import * as THREE from "./three.module.js";
+import { GLTFLoader } from "./GLTFLoader.js";
 
-const THREE = window.THREE;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x32465f);
@@ -381,7 +374,10 @@ const fxCtx = fxCanvas.getContext("2d");
 
 const keyState = Object.create(null);
 let attackQueued = false;
+let heavyAttackQueued = false;
 let jumpQueued = false;
+let mouseLeftDown = false;
+let mouseLeftDownAt = 0;
 let outcomeState = "none";
 let outcomePulse = 0;
 let previousOutcomeState = "none";
@@ -400,6 +396,27 @@ let musicStep = 0;
 let musicIntervalId = null;
 const MUSIC_GAIN_TARGET = 0.85;
 const MAX_FX_PARTICLES = 220;
+const HEAVY_HOLD_THRESHOLD = 0.38;
+const HERO_REFERENCE_HEIGHT = 1.45;
+const HERO_MODEL_YAW_OFFSET = Math.PI;
+const HERO_CAMERA_SCALE = 1;
+const CAMERA_THIRD_PERSON_DISTANCE = 10.5;
+const CAMERA_THIRD_PERSON_HEIGHT = 6.2;
+const CAMERA_THIRD_PERSON_SIDE = 0.4;
+const CAMERA_THIRD_PERSON_LOOKAHEAD = 1.2;
+const CAMERA_THIRD_PERSON_LOOK_HEIGHT = 2.2;
+
+const HERO_MESHY_ASSETS = {
+  idle: "./assets/Meshy_AI_biped/Meshy_AI_Animation_Idle_withSkin.glb",
+  run: "./assets/Meshy_AI_biped/Meshy_AI_Animation_Running_withSkin.glb",
+  walk: "./assets/Meshy_AI_biped/Meshy_AI_Animation_Walking_withSkin.glb",
+  heavyAttack: "./assets/Meshy_AI_biped/Meshy_AI_Animation_Attack_withSkin.glb",
+  dead: "./assets/Meshy_AI_biped/Meshy_AI_Animation_Dead_withSkin.glb",
+};
+
+const gltfLoader = new GLTFLoader();
+const tmpQuatA = new THREE.Quaternion();
+const tmpEulerA = new THREE.Euler();
 
 const fxParticles = [];
 let winFireworkTimer = 0;
@@ -427,8 +444,27 @@ window.addEventListener("keyup", (event) => {
 window.addEventListener("mousedown", (event) => {
   ensureAudio();
   if (event.button === 0) {
+    mouseLeftDown = true;
+    mouseLeftDownAt = performance.now();
+  }
+});
+
+window.addEventListener("mouseup", (event) => {
+  if (event.button !== 0 || !mouseLeftDown) {
+    return;
+  }
+
+  const holdMs = performance.now() - mouseLeftDownAt;
+  if (holdMs >= HEAVY_HOLD_THRESHOLD * 1000) {
+    heavyAttackQueued = true;
+  } else {
     attackQueued = true;
   }
+  mouseLeftDown = false;
+});
+
+window.addEventListener("blur", () => {
+  mouseLeftDown = false;
 });
 
 window.addEventListener("touchstart", () => {
@@ -446,7 +482,7 @@ const cameraRight = new THREE.Vector3();
 const cameraDesiredPosition = new THREE.Vector3();
 const cameraLookTarget = new THREE.Vector3();
 const toEnemyFlat = new THREE.Vector3();
-const CAMERA_MAX_RADIUS = 18.6;
+const CAMERA_MAX_RADIUS = 30.0;
 
 function clampVectorXZ(vec, maxRadius) {
   const lenSq = vec.x * vec.x + vec.z * vec.z;
@@ -721,6 +757,363 @@ function updateFxParticles(dt) {
   }
 
   fxCtx.globalAlpha = 1;
+}
+
+function loadGlbAsset(url) {
+  return new Promise((resolve, reject) => {
+    gltfLoader.load(url, resolve, undefined, reject);
+  });
+}
+
+function findBoneByAliases(root, aliases) {
+  let found = null;
+  root.traverse((obj) => {
+    if (found || !obj.isBone || !obj.name) {
+      return;
+    }
+    const lowered = obj.name.toLowerCase();
+    if (aliases.some((alias) => lowered.includes(alias))) {
+      found = obj;
+    }
+  });
+  return found;
+}
+
+function applyBoneOffset(bone, baseQuaternion, x, y, z) {
+  if (!bone || !baseQuaternion) {
+    return;
+  }
+  tmpEulerA.set(x, y, z, "XYZ");
+  tmpQuatA.setFromEuler(tmpEulerA);
+  bone.quaternion.copy(baseQuaternion).multiply(tmpQuatA);
+}
+
+function createHeroRuntimeSword() {
+  const swordGroup = new THREE.Group();
+
+  const blade = new THREE.Mesh(
+    new THREE.BoxGeometry(0.045, 0.9, 0.08),
+    new THREE.MeshStandardMaterial({
+      color: 0xf4f7ff,
+      metalness: 0.78,
+      roughness: 0.24,
+      emissive: 0x1b2f52,
+      emissiveIntensity: 0.08,
+    })
+  );
+  blade.position.set(0, -0.48, 0);
+  blade.castShadow = true;
+  swordGroup.add(blade);
+
+  const hilt = new THREE.Mesh(
+    new THREE.BoxGeometry(0.19, 0.045, 0.1),
+    new THREE.MeshStandardMaterial({
+      color: 0x8c9bb6,
+      roughness: 0.34,
+      metalness: 0.56,
+    })
+  );
+  hilt.position.set(0, -0.07, 0);
+  hilt.castShadow = true;
+  swordGroup.add(hilt);
+
+  const grip = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.024, 0.024, 0.22, 10),
+    new THREE.MeshStandardMaterial({
+      color: 0x2a2b33,
+      roughness: 0.76,
+      metalness: 0.12,
+    })
+  );
+  grip.rotation.z = Math.PI * 0.5;
+  grip.position.set(0, 0.03, 0);
+  grip.castShadow = true;
+  swordGroup.add(grip);
+
+  return swordGroup;
+}
+
+function playHeroAction(actionName, options = {}) {
+  if (!hero.model.enabled || !hero.model.actions[actionName]) {
+    return;
+  }
+
+  const {
+    fade = 0.12,
+    restart = false,
+    loop = THREE.LoopRepeat,
+    repetitions = Infinity,
+    clampWhenFinished = false,
+    timeScale = 1,
+  } = options;
+
+  if (hero.model.currentAction === actionName && !restart) {
+    const current = hero.model.actions[actionName];
+    current.timeScale = timeScale;
+    return;
+  }
+
+  Object.entries(hero.model.actions).forEach(([name, action]) => {
+    if (!action) {
+      return;
+    }
+    if (name === actionName) {
+      return;
+    }
+    action.fadeOut(fade);
+  });
+
+  const next = hero.model.actions[actionName];
+  if (restart) {
+    next.reset();
+  }
+  next.enabled = true;
+  next.setLoop(loop, repetitions);
+  next.clampWhenFinished = clampWhenFinished;
+  next.timeScale = timeScale;
+  next.fadeIn(fade).play();
+  hero.model.currentAction = actionName;
+}
+
+function recoverHeroProceduralBones(blendRate) {
+  if (!hero.model.enabled || !hero.model.basePose || !hero.model.bones) {
+    return;
+  }
+
+  Object.entries(hero.model.bones).forEach(([key, bone]) => {
+    const base = hero.model.basePose[key];
+    if (!bone || !base) {
+      return;
+    }
+    bone.quaternion.slerp(base, Math.min(1, blendRate));
+  });
+}
+
+function applyHeroShortAttackProcedural(progress) {
+  if (!hero.model.enabled || !hero.model.basePose || !hero.model.bones) {
+    return;
+  }
+
+  const windupEnd = 0.34;
+  let torsoYaw;
+  let torsoPitch;
+  let armLift;
+  let forearmLift;
+  let handTwist;
+
+  if (progress < windupEnd) {
+    const t = progress / windupEnd;
+    torsoYaw = -0.36 * t;
+    torsoPitch = 0.08 * t;
+    armLift = -1.28 * t;
+    forearmLift = -0.74 * t;
+    handTwist = -0.15 * t;
+  } else {
+    const t = Math.min(1, (progress - windupEnd) / (1 - windupEnd));
+    torsoYaw = -0.36 + t * 0.9;
+    torsoPitch = 0.08 - t * 0.14;
+    armLift = -1.28 + t * 2.35;
+    forearmLift = -0.74 + t * 1.45;
+    handTwist = -0.15 + t * 0.42;
+  }
+
+  applyBoneOffset(
+    hero.model.bones.spine,
+    hero.model.basePose.spine,
+    torsoPitch,
+    torsoYaw,
+    0
+  );
+  applyBoneOffset(
+    hero.model.bones.chest,
+    hero.model.basePose.chest,
+    torsoPitch * 0.65,
+    torsoYaw * 0.72,
+    0
+  );
+  applyBoneOffset(
+    hero.model.bones.rightUpperArm,
+    hero.model.basePose.rightUpperArm,
+    armLift,
+    0.16,
+    -0.22
+  );
+  applyBoneOffset(
+    hero.model.bones.rightForeArm,
+    hero.model.basePose.rightForeArm,
+    forearmLift,
+    0,
+    0.12
+  );
+  applyBoneOffset(
+    hero.model.bones.rightHand,
+    hero.model.basePose.rightHand,
+    0,
+    0,
+    handTwist
+  );
+}
+
+function updateHeroModelAnimation(dt) {
+  if (!hero.model.enabled || !hero.model.mixer) {
+    return;
+  }
+
+  if (hero.state === "dead") {
+    if (hero.model.actions.dead) {
+      playHeroAction("dead", {
+        fade: 0.15,
+        loop: THREE.LoopOnce,
+        clampWhenFinished: true,
+      });
+    }
+    recoverHeroProceduralBones(0.18);
+    return;
+  }
+
+  if (hero.state === "attack" && hero.attackType === "heavy") {
+    if (hero.model.actions.heavy) {
+      playHeroAction("heavy", {
+        fade: 0.1,
+        loop: THREE.LoopOnce,
+        clampWhenFinished: true,
+      });
+    }
+    recoverHeroProceduralBones(0.16);
+    return;
+  }
+
+  if (hero.state === "run") {
+    if (hero.model.actions.run) {
+      playHeroAction("run", { fade: 0.12, timeScale: 1.04 });
+    } else if (hero.model.actions.walk) {
+      playHeroAction("walk", { fade: 0.12, timeScale: 1.12 });
+    }
+  } else if (hero.model.actions.idle) {
+    playHeroAction("idle", { fade: 0.14, timeScale: 1 });
+  }
+
+  if (hero.state === "attack" && hero.attackType === "light") {
+    const progress = 1 - hero.attackTimer / Math.max(hero.attackDuration, 0.001);
+    applyHeroShortAttackProcedural(progress);
+  } else {
+    recoverHeroProceduralBones(0.22);
+  }
+}
+
+async function loadHeroFromMeshyPack() {
+  try {
+    statusEl.textContent = "주인공 모델 로딩 중...";
+
+    const [idleGltf, runGltf, walkGltf, attackGltf, deadGltf] = await Promise.all([
+      loadGlbAsset(HERO_MESHY_ASSETS.idle),
+      loadGlbAsset(HERO_MESHY_ASSETS.run),
+      loadGlbAsset(HERO_MESHY_ASSETS.walk),
+      loadGlbAsset(HERO_MESHY_ASSETS.heavyAttack),
+      loadGlbAsset(HERO_MESHY_ASSETS.dead),
+    ]);
+
+    const visualRoot = idleGltf.scene;
+    visualRoot.traverse((obj) => {
+      if (obj.isMesh) {
+        obj.castShadow = true;
+        obj.receiveShadow = true;
+        obj.frustumCulled = false;
+      }
+    });
+
+    while (hero.mesh.children.length > 0) {
+      hero.mesh.remove(hero.mesh.children[0]);
+    }
+    hero.mesh.add(visualRoot);
+    visualRoot.rotation.y = HERO_MODEL_YAW_OFFSET;
+
+    const preScaleBox = new THREE.Box3().setFromObject(visualRoot);
+    const preSize = preScaleBox.getSize(new THREE.Vector3());
+    if (preSize.y > 1e-6) {
+      const minotaurSize = new THREE.Box3().setFromObject(minotaur.mesh).getSize(new THREE.Vector3());
+      const targetHeight = minotaurSize.y > 1e-6 ? minotaurSize.y : HERO_REFERENCE_HEIGHT;
+      const scale = targetHeight / preSize.y;
+      visualRoot.scale.setScalar(scale);
+    }
+
+    const scaledBox = new THREE.Box3().setFromObject(visualRoot);
+    hero.model.height = Math.max(0.001, scaledBox.max.y - scaledBox.min.y);
+    const center = scaledBox.getCenter(new THREE.Vector3());
+    visualRoot.position.x -= center.x;
+    visualRoot.position.z -= center.z;
+    visualRoot.position.y -= scaledBox.min.y;
+
+    const mixer = new THREE.AnimationMixer(hero.mesh);
+    const actionMap = {};
+
+    const idleClip = idleGltf.animations[0] || null;
+    const runClip = runGltf.animations[0] || null;
+    const walkClip = walkGltf.animations[0] || null;
+    const heavyClip = attackGltf.animations[0] || null;
+    const deadClip = deadGltf.animations[0] || null;
+
+    if (idleClip) {
+      actionMap.idle = mixer.clipAction(idleClip, hero.mesh);
+    }
+    if (runClip) {
+      actionMap.run = mixer.clipAction(runClip, hero.mesh);
+    }
+    if (walkClip) {
+      actionMap.walk = mixer.clipAction(walkClip, hero.mesh);
+    }
+    if (heavyClip) {
+      actionMap.heavy = mixer.clipAction(heavyClip, hero.mesh);
+      hero.heavyAttackDuration = Math.max(0.68, Math.min(1.55, heavyClip.duration || 0.95));
+    }
+    if (deadClip) {
+      actionMap.dead = mixer.clipAction(deadClip, hero.mesh);
+    }
+
+    const bones = {
+      spine: findBoneByAliases(hero.mesh, ["spine2", "spine_02", "spine1", "spine", "chest"]),
+      chest: findBoneByAliases(hero.mesh, ["chest", "upperchest", "spine3", "spine_03"]),
+      rightUpperArm: findBoneByAliases(hero.mesh, ["rightupperarm", "upperarm_r", "arm_r", "r_arm", "rightarm"]),
+      rightForeArm: findBoneByAliases(hero.mesh, ["rightforearm", "lowerarm_r", "forearm_r", "r_forearm"]),
+      rightHand: findBoneByAliases(hero.mesh, ["righthand", "hand_r", "r_hand"]),
+    };
+
+    hero.model.enabled = true;
+    hero.model.mixer = mixer;
+    hero.model.actions = actionMap;
+    hero.model.currentAction = "";
+    hero.model.bones = bones;
+    hero.model.basePose = {
+      spine: bones.spine ? bones.spine.quaternion.clone() : null,
+      chest: bones.chest ? bones.chest.quaternion.clone() : null,
+      rightUpperArm: bones.rightUpperArm ? bones.rightUpperArm.quaternion.clone() : null,
+      rightForeArm: bones.rightForeArm ? bones.rightForeArm.quaternion.clone() : null,
+      rightHand: bones.rightHand ? bones.rightHand.quaternion.clone() : null,
+    };
+
+    const runtimeSword = createHeroRuntimeSword();
+    runtimeSword.name = "RuntimeHeroSword";
+    const swordAttachTarget = bones.rightHand || bones.rightForeArm || bones.rightUpperArm;
+    if (swordAttachTarget) {
+      swordAttachTarget.add(runtimeSword);
+      runtimeSword.position.set(0.03, -0.02, 0.05);
+      runtimeSword.rotation.set(-1.35, 0.18, 0.08);
+    } else {
+      hero.mesh.add(runtimeSword);
+      runtimeSword.position.set(0.2, 1.1, 0.1);
+      runtimeSword.rotation.set(-1.35, 0.18, 0.08);
+    }
+    hero.model.sword = runtimeSword;
+
+    if (hero.model.actions.idle) {
+      playHeroAction("idle", { fade: 0.01, restart: true });
+    }
+
+    statusEl.textContent = "모델 적용 완료 - 좌클릭 길게 강공격";
+  } catch (error) {
+    console.error("[Hero Model Load Error]", error);
+    statusEl.textContent = "모델 로드 실패. 플레이스홀더로 진행";
+  }
 }
 
 function createBone(length, radius, color) {
@@ -1139,6 +1532,9 @@ const hero = {
   hurtTimer: 0,
   attackTimer: 0,
   attackDuration: 0.36,
+  lightAttackDuration: 0.28,
+  heavyAttackDuration: 1.0,
+  attackType: "light",
   attackCooldown: 0,
   attackDidHit: false,
   stunTimer: 0,
@@ -1147,6 +1543,16 @@ const hero = {
   verticalVelocity: 0,
   isJumping: false,
   dead: false,
+  model: {
+    enabled: false,
+    mixer: null,
+    actions: {},
+    currentAction: "",
+    bones: null,
+    basePose: null,
+    sword: null,
+    height: HERO_REFERENCE_HEIGHT,
+  },
 };
 
 const minotaur = {
@@ -1188,6 +1594,8 @@ function resetBattle() {
   hero.attackTimer = 0;
   hero.attackCooldown = 0;
   hero.attackDidHit = false;
+  hero.attackType = "light";
+  hero.attackDuration = hero.lightAttackDuration;
   hero.stunTimer = 0;
   hero.verticalVelocity = 0;
   hero.isJumping = false;
@@ -1247,6 +1655,14 @@ function resetBattle() {
   warningBanner.style.transform = "translate(-50%, -50%) scale(0.92)";
   warningBanner.textContent = "";
   jumpQueued = false;
+  heavyAttackQueued = false;
+  mouseLeftDown = false;
+
+  if (hero.model.enabled) {
+    hero.model.currentAction = "";
+    playHeroAction("idle", { fade: 0.01, restart: true });
+    recoverHeroProceduralBones(1);
+  }
 
   if (audioCtx) {
     startBackgroundMusic();
@@ -1256,6 +1672,7 @@ function resetBattle() {
 }
 
 resetBattle();
+loadHeroFromMeshyPack();
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -1320,7 +1737,7 @@ function updateHeroJump(dt) {
   }
 }
 
-function tryHeroAttack() {
+function tryHeroAttack(type = "light") {
   if (
     hero.dead ||
     minotaur.dead ||
@@ -1330,29 +1747,58 @@ function tryHeroAttack() {
   ) {
     return;
   }
+
+  const wantsHeavy = type === "heavy";
+  const canHeavy = wantsHeavy && hero.model.enabled && !!hero.model.actions.heavy;
+  hero.attackType = canHeavy ? "heavy" : "light";
+  hero.attackDuration = hero.attackType === "heavy"
+    ? hero.heavyAttackDuration
+    : hero.lightAttackDuration;
   hero.state = "attack";
   hero.attackTimer = hero.attackDuration;
-  hero.attackCooldown = 0.58;
+  hero.attackCooldown = hero.attackType === "heavy" ? 1.02 : 0.46;
   hero.attackDidHit = false;
+
+  if (hero.model.enabled && hero.attackType === "heavy") {
+    playHeroAction("heavy", {
+      fade: 0.08,
+      restart: true,
+      loop: THREE.LoopOnce,
+      clampWhenFinished: true,
+      timeScale: 1,
+    });
+  }
 }
 
 function performHeroHitCheck() {
+  const isHeavy = hero.attackType === "heavy";
   tmpVecA.subVectors(minotaur.mesh.position, hero.mesh.position);
   tmpVecA.y = 0;
   const distance = tmpVecA.length();
-  if (distance > 2.4) {
+  if (distance > (isHeavy ? 2.95 : 2.4)) {
     return;
   }
+
   tmpVecA.normalize();
   tmpVecB.set(Math.sin(hero.mesh.rotation.y), 0, Math.cos(hero.mesh.rotation.y));
   const dot = tmpVecB.dot(tmpVecA);
-  if (dot < 0.2) {
+  if (dot < (isHeavy ? 0.02 : 0.2)) {
     return;
   }
-  takeMinotaurDamage(34);
-  minotaur.mesh.position.addScaledVector(tmpVecA, 0.4);
-  triggerHitImpact(0.62, "rgba(255,240,210,0.9)");
-  playHitSound(false);
+
+  const damage = isHeavy ? 58 : 34;
+  const knockback = isHeavy ? 0.82 : 0.4;
+  takeMinotaurDamage(damage);
+  minotaur.mesh.position.addScaledVector(tmpVecA, knockback);
+
+  if (isHeavy) {
+    triggerHitImpact(1.05, "rgba(255,198,135,0.95)");
+    playHitSound(false);
+    playNoiseBurst(audioCtx ? audioCtx.currentTime : 0, 0.1, 0.16);
+  } else {
+    triggerHitImpact(0.62, "rgba(255,240,210,0.9)");
+    playHitSound(false);
+  }
 }
 
 function performMinotaurHitCheck() {
@@ -1438,6 +1884,11 @@ function rotateYawToward(currentYaw, targetYaw, maxStep) {
 }
 
 function animateHero(time, dt) {
+  if (hero.model.enabled) {
+    updateHeroModelAnimation(dt);
+    return;
+  }
+
   const rig = hero.rig;
 
   if (hero.state === "dead") {
@@ -1675,6 +2126,10 @@ function updateHero(dt, time) {
 
   updateHeroJump(dt);
 
+  if (hero.model.enabled && hero.model.mixer) {
+    hero.model.mixer.update(dt);
+  }
+
   hero.attackCooldown = Math.max(0, hero.attackCooldown - dt);
 
   if (hero.stunTimer > 0) {
@@ -1692,8 +2147,13 @@ function updateHero(dt, time) {
     return;
   }
 
+  if (heavyAttackQueued) {
+    tryHeroAttack("heavy");
+    heavyAttackQueued = false;
+  }
+
   if (attackQueued) {
-    tryHeroAttack();
+    tryHeroAttack("light");
     attackQueued = false;
   }
 
@@ -1701,13 +2161,15 @@ function updateHero(dt, time) {
     hero.state = "attack";
     hero.attackTimer = Math.max(0, hero.attackTimer - dt);
     const progress = 1 - hero.attackTimer / hero.attackDuration;
-    if (!hero.attackDidHit && progress >= 0.55) {
+    const hitTiming = hero.attackType === "heavy" ? 0.64 : 0.48;
+    if (!hero.attackDidHit && progress >= hitTiming) {
       hero.attackDidHit = true;
       performHeroHitCheck();
     }
+    const attackStep = hero.attackType === "heavy" ? 1.85 : 1.4;
     hero.mesh.position.addScaledVector(
       tmpVecA.set(Math.sin(hero.mesh.rotation.y), 0, Math.cos(hero.mesh.rotation.y)),
-      dt * 1.4
+      dt * attackStep
     );
     clampToArena(hero.mesh, 15.8);
     animateHero(time, dt);
@@ -1967,30 +2429,37 @@ function updateCamera() {
   const shakeOffsetY = cameraShakeTime > 0 ? (Math.random() - 0.5) * cameraShakeStrength * 0.6 : 0;
   const shakeOffsetZ = cameraShakeTime > 0 ? (Math.random() - 0.5) * cameraShakeStrength : 0;
   const lockOnActive = !hero.dead && !minotaur.dead;
+  const heroScale = hero.model.enabled
+    ? Math.max(1, (hero.model.height || HERO_REFERENCE_HEIGHT) / HERO_REFERENCE_HEIGHT)
+    : 1;
+  const camScale = heroScale * HERO_CAMERA_SCALE;
+  const followDistance = CAMERA_THIRD_PERSON_DISTANCE * camScale;
+  const followHeight = CAMERA_THIRD_PERSON_HEIGHT * camScale;
+  const sideOffset = CAMERA_THIRD_PERSON_SIDE * camScale;
+  const lookAhead = CAMERA_THIRD_PERSON_LOOKAHEAD * camScale;
+  const lookHeight = CAMERA_THIRD_PERSON_LOOK_HEIGHT * camScale;
 
   if (lockOnActive) {
-    toEnemyFlat.subVectors(minotaur.mesh.position, hero.mesh.position);
-    toEnemyFlat.y = 0;
-
-    if (toEnemyFlat.lengthSq() < 1e-6) {
-      toEnemyFlat.set(Math.sin(hero.mesh.rotation.y), 0, Math.cos(hero.mesh.rotation.y));
+    tmpVecD.set(Math.sin(hero.mesh.rotation.y), 0, Math.cos(hero.mesh.rotation.y));
+    if (tmpVecD.lengthSq() < 1e-6) {
+      tmpVecD.set(0, 0, 1);
     } else {
-      toEnemyFlat.normalize();
+      tmpVecD.normalize();
     }
 
-    cameraRight.crossVectors(toEnemyFlat, upAxis).normalize();
+    cameraRight.crossVectors(tmpVecD, upAxis).normalize();
 
     cameraDesiredPosition
       .copy(hero.mesh.position)
-      .addScaledVector(toEnemyFlat, -7.4)
-      .addScaledVector(cameraRight, 1.2);
-    cameraDesiredPosition.y = hero.mesh.position.y + 4.6;
+      .addScaledVector(tmpVecD, -followDistance)
+      .addScaledVector(cameraRight, sideOffset);
+    cameraDesiredPosition.y = hero.mesh.position.y + followHeight;
     clampVectorXZ(cameraDesiredPosition, CAMERA_MAX_RADIUS);
 
     cameraLookTarget
       .copy(hero.mesh.position)
-      .addScaledVector(toEnemyFlat, 2.6)
-      .addScaledVector(upAxis, 1.25);
+      .addScaledVector(tmpVecD, lookAhead)
+      .addScaledVector(upAxis, lookHeight);
 
     camera.position.lerp(cameraDesiredPosition, 0.12);
     camera.position.x += shakeOffsetX;
@@ -2000,14 +2469,16 @@ function updateCamera() {
     return;
   }
 
-  tmpVecA.set(0, 5.4, 8.6).applyAxisAngle(upAxis, hero.mesh.rotation.y);
+  tmpVecA
+    .set(0, followHeight, -followDistance * 1.12)
+    .applyAxisAngle(upAxis, hero.mesh.rotation.y);
   tmpVecB.copy(hero.mesh.position).add(tmpVecA);
   clampVectorXZ(tmpVecB, CAMERA_MAX_RADIUS);
   camera.position.lerp(tmpVecB, 0.09);
   camera.position.x += shakeOffsetX;
   camera.position.y += shakeOffsetY;
   camera.position.z += shakeOffsetZ;
-  camera.lookAt(hero.mesh.position.x, hero.mesh.position.y + 1.2, hero.mesh.position.z);
+  camera.lookAt(hero.mesh.position.x, hero.mesh.position.y + lookHeight, hero.mesh.position.z);
 }
 
 const testMoveVec = new THREE.Vector3();
@@ -2089,7 +2560,7 @@ function updateHud() {
 
   if (!hero.dead && !minotaur.dead) {
     if (hero.attackTimer > 0) {
-      setStatus("영웅 공격 중");
+      setStatus(hero.attackType === "heavy" ? "강공격 발동" : "약공격 발동");
     } else if (minotaur.state === "slam_windup") {
       setStatus("미노타우르스 지면 강타 준비!");
     } else if (minotaur.state === "slam") {
@@ -2103,7 +2574,7 @@ function updateHud() {
     } else if (hero.state === "run") {
       setStatus("접근해서 공격해봐");
     } else {
-      setStatus("J 또는 좌클릭으로 공격");
+      setStatus("좌클릭 짧게 약공격 / 길게 강공격");
     }
   }
 }
