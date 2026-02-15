@@ -10,8 +10,8 @@ if (!window.THREE) {
 const THREE = window.THREE;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0f1420);
-scene.fog = new THREE.Fog(0x0f1420, 18, 62);
+scene.background = new THREE.Color(0x32465f);
+scene.fog = new THREE.Fog(0x32465f, 22, 78);
 
 const camera = new THREE.PerspectiveCamera(
   60,
@@ -26,12 +26,14 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.24;
 document.body.appendChild(renderer.domElement);
 
-const hemiLight = new THREE.HemisphereLight(0xbad1ff, 0x0f1115, 0.55);
+const hemiLight = new THREE.HemisphereLight(0xd6e6ff, 0x44566a, 0.95);
 scene.add(hemiLight);
 
-const sun = new THREE.DirectionalLight(0xfff2d7, 1.25);
+const sun = new THREE.DirectionalLight(0xfff3d8, 1.7);
 sun.position.set(9, 16, 7);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -90,10 +92,76 @@ const hudHeroHp = document.getElementById("hero-hp");
 const hudMinotaurHp = document.getElementById("minotaur-hp");
 const statusEl = document.getElementById("status");
 
+const outcomeOverlay = document.createElement("div");
+outcomeOverlay.style.position = "fixed";
+outcomeOverlay.style.inset = "0";
+outcomeOverlay.style.pointerEvents = "none";
+outcomeOverlay.style.opacity = "0";
+outcomeOverlay.style.transition = "opacity 260ms ease";
+outcomeOverlay.style.background =
+  "radial-gradient(circle at center, rgba(255,255,255,0.0) 0%, rgba(10,14,18,0.0) 60%, rgba(0,0,0,0.0) 100%)";
+outcomeOverlay.style.zIndex = "12";
+document.body.appendChild(outcomeOverlay);
+
+const outcomeText = document.createElement("div");
+outcomeText.style.position = "fixed";
+outcomeText.style.left = "50%";
+outcomeText.style.top = "38%";
+outcomeText.style.transform = "translate(-50%, -50%) scale(0.9)";
+outcomeText.style.fontFamily = "Georgia, serif";
+outcomeText.style.fontSize = "56px";
+outcomeText.style.fontWeight = "700";
+outcomeText.style.letterSpacing = "0.1em";
+outcomeText.style.color = "#ffffff";
+outcomeText.style.textShadow = "0 0 18px rgba(255,255,255,0.3)";
+outcomeText.style.opacity = "0";
+outcomeText.style.transition = "opacity 300ms ease, transform 300ms ease";
+outcomeText.style.pointerEvents = "none";
+outcomeText.style.zIndex = "13";
+document.body.appendChild(outcomeText);
+
+const hitFlash = document.createElement("div");
+hitFlash.style.position = "fixed";
+hitFlash.style.inset = "0";
+hitFlash.style.pointerEvents = "none";
+hitFlash.style.opacity = "0";
+hitFlash.style.background = "rgba(255,255,255,0.0)";
+hitFlash.style.transition = "opacity 80ms linear";
+hitFlash.style.zIndex = "14";
+document.body.appendChild(hitFlash);
+
+const fxCanvas = document.createElement("canvas");
+fxCanvas.style.position = "fixed";
+fxCanvas.style.inset = "0";
+fxCanvas.style.pointerEvents = "none";
+fxCanvas.style.zIndex = "15";
+document.body.appendChild(fxCanvas);
+const fxCtx = fxCanvas.getContext("2d");
+
 const keyState = Object.create(null);
 let attackQueued = false;
+let outcomeState = "none";
+let outcomePulse = 0;
+let previousOutcomeState = "none";
+let hitFlashAlpha = 0;
+let cameraShakeTime = 0;
+let cameraShakeStrength = 0;
+let hitStopTimer = 0;
+
+let audioCtx = null;
+let audioMaster = null;
+let audioMusicGain = null;
+let audioSfxGain = null;
+let musicStarted = false;
+let musicStep = 0;
+let musicIntervalId = null;
+
+const fxParticles = [];
+let winFireworkTimer = 0;
+let loseDriftTimer = 0;
 
 window.addEventListener("keydown", (event) => {
+  ensureAudio();
   keyState[event.code] = true;
   if (event.code === "KeyJ") {
     attackQueued = true;
@@ -108,14 +176,266 @@ window.addEventListener("keyup", (event) => {
 });
 
 window.addEventListener("mousedown", (event) => {
+  ensureAudio();
   if (event.button === 0) {
     attackQueued = true;
   }
 });
 
+window.addEventListener("touchstart", () => {
+  ensureAudio();
+}, { passive: true });
+
 const tmpVecA = new THREE.Vector3();
 const tmpVecB = new THREE.Vector3();
 const upAxis = new THREE.Vector3(0, 1, 0);
+const moveInput = new THREE.Vector3();
+const cameraForward = new THREE.Vector3();
+const cameraRight = new THREE.Vector3();
+const cameraDesiredPosition = new THREE.Vector3();
+const cameraLookTarget = new THREE.Vector3();
+const toEnemyFlat = new THREE.Vector3();
+
+function resizeFxCanvas() {
+  fxCanvas.width = window.innerWidth;
+  fxCanvas.height = window.innerHeight;
+}
+
+resizeFxCanvas();
+
+function ensureAudio() {
+  if (audioCtx) {
+    if (audioCtx.state === "suspended") {
+      audioCtx.resume();
+    }
+    return;
+  }
+
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) {
+    return;
+  }
+
+  audioCtx = new AudioContextClass();
+  audioMaster = audioCtx.createGain();
+  audioMaster.gain.value = 0.5;
+  audioMaster.connect(audioCtx.destination);
+
+  audioMusicGain = audioCtx.createGain();
+  audioMusicGain.gain.value = 0.85;
+  audioMusicGain.connect(audioMaster);
+
+  audioSfxGain = audioCtx.createGain();
+  audioSfxGain.gain.value = 1.0;
+  audioSfxGain.connect(audioMaster);
+
+  if (!musicStarted) {
+    startBackgroundMusic();
+  }
+}
+
+function playTone(frequency, startAt, duration, volume, type) {
+  if (!audioCtx || !audioSfxGain) {
+    return;
+  }
+
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type || "sine";
+  osc.frequency.setValueAtTime(frequency, startAt);
+  gain.gain.setValueAtTime(0.0001, startAt);
+  gain.gain.exponentialRampToValueAtTime(volume, startAt + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+  osc.connect(gain);
+  gain.connect(audioSfxGain);
+  osc.start(startAt);
+  osc.stop(startAt + duration + 0.03);
+}
+
+function playNoiseBurst(startAt, duration, volume) {
+  if (!audioCtx || !audioSfxGain) {
+    return;
+  }
+
+  const sampleRate = audioCtx.sampleRate;
+  const frameCount = Math.floor(sampleRate * duration);
+  const buffer = audioCtx.createBuffer(1, frameCount, sampleRate);
+  const channel = buffer.getChannelData(0);
+  for (let i = 0; i < frameCount; i += 1) {
+    channel[i] = (Math.random() * 2 - 1) * (1 - i / frameCount);
+  }
+
+  const source = audioCtx.createBufferSource();
+  const filter = audioCtx.createBiquadFilter();
+  const gain = audioCtx.createGain();
+  filter.type = "highpass";
+  filter.frequency.value = 680;
+  gain.gain.setValueAtTime(volume, startAt);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+  source.buffer = buffer;
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(audioSfxGain);
+  source.start(startAt);
+  source.stop(startAt + duration + 0.02);
+}
+
+function playHitSound(isHeavy) {
+  ensureAudio();
+  if (!audioCtx) {
+    return;
+  }
+  const now = audioCtx.currentTime;
+  const base = isHeavy ? 140 : 200;
+  playTone(base, now, 0.11, isHeavy ? 0.2 : 0.15, "triangle");
+  playTone(base * 1.6, now + 0.01, 0.08, isHeavy ? 0.13 : 0.1, "square");
+  playNoiseBurst(now, isHeavy ? 0.09 : 0.06, isHeavy ? 0.16 : 0.1);
+}
+
+function playOutcomeStinger(kind) {
+  ensureAudio();
+  if (!audioCtx) {
+    return;
+  }
+
+  const now = audioCtx.currentTime;
+  if (kind === "win") {
+    playTone(392, now, 0.28, 0.14, "triangle");
+    playTone(523.25, now + 0.14, 0.28, 0.14, "triangle");
+    playTone(659.25, now + 0.28, 0.36, 0.18, "triangle");
+    return;
+  }
+
+  playTone(220, now, 0.28, 0.13, "sawtooth");
+  playTone(196, now + 0.16, 0.34, 0.13, "sawtooth");
+  playTone(174.61, now + 0.36, 0.48, 0.14, "sawtooth");
+}
+
+function startBackgroundMusic() {
+  if (!audioCtx || musicStarted) {
+    return;
+  }
+  musicStarted = true;
+
+  const melody = [261.63, 311.13, 392.0, 466.16, 523.25, 466.16, 392.0, 349.23];
+  const bass = [98.0, 110.0, 87.31, 98.0, 123.47, 110.0, 98.0, 87.31];
+  const stepDuration = 0.3;
+
+  musicIntervalId = window.setInterval(() => {
+    if (!audioCtx || !audioMusicGain) {
+      return;
+    }
+    const now = audioCtx.currentTime;
+    const note = melody[musicStep % melody.length];
+    const bassNote = bass[musicStep % bass.length];
+
+    const oscA = audioCtx.createOscillator();
+    const oscB = audioCtx.createOscillator();
+    const gainA = audioCtx.createGain();
+    const gainB = audioCtx.createGain();
+
+    oscA.type = "triangle";
+    oscB.type = "sine";
+    oscA.frequency.setValueAtTime(note, now);
+    oscB.frequency.setValueAtTime(bassNote, now);
+
+    gainA.gain.setValueAtTime(0.0001, now);
+    gainA.gain.exponentialRampToValueAtTime(0.085, now + 0.04);
+    gainA.gain.exponentialRampToValueAtTime(0.0001, now + stepDuration);
+
+    gainB.gain.setValueAtTime(0.0001, now);
+    gainB.gain.exponentialRampToValueAtTime(0.055, now + 0.05);
+    gainB.gain.exponentialRampToValueAtTime(0.0001, now + stepDuration);
+
+    oscA.connect(gainA);
+    oscB.connect(gainB);
+    gainA.connect(audioMusicGain);
+    gainB.connect(audioMusicGain);
+
+    oscA.start(now);
+    oscB.start(now);
+    oscA.stop(now + stepDuration + 0.05);
+    oscB.stop(now + stepDuration + 0.05);
+
+    musicStep += 1;
+  }, stepDuration * 1000);
+}
+
+function triggerHitImpact(strength, flashColor) {
+  hitStopTimer = Math.max(hitStopTimer, 0.03 + strength * 0.02);
+  cameraShakeTime = Math.max(cameraShakeTime, 0.11 + strength * 0.07);
+  cameraShakeStrength = Math.max(cameraShakeStrength, 0.12 + strength * 0.22);
+  hitFlashAlpha = Math.max(hitFlashAlpha, 0.12 + strength * 0.28);
+  hitFlash.style.background = flashColor;
+}
+
+function spawnFxParticle(x, y, vx, vy, life, size, color, gravity) {
+  fxParticles.push({ x, y, vx, vy, life, maxLife: life, size, color, gravity: gravity || 0 });
+}
+
+function spawnVictoryBurst() {
+  const cx = fxCanvas.width * 0.5 + (Math.random() - 0.5) * (fxCanvas.width * 0.38);
+  const cy = fxCanvas.height * (0.28 + Math.random() * 0.24);
+  const colors = ["#ffe785", "#ffd26e", "#fff1bf", "#8fd7ff"];
+  for (let i = 0; i < 38; i += 1) {
+    const angle = (i / 38) * Math.PI * 2;
+    const speed = 90 + Math.random() * 220;
+    spawnFxParticle(
+      cx,
+      cy,
+      Math.cos(angle) * speed,
+      Math.sin(angle) * speed,
+      0.85 + Math.random() * 0.7,
+      2 + Math.random() * 3,
+      colors[i % colors.length],
+      120
+    );
+  }
+}
+
+function spawnDefeatDrift() {
+  const x = Math.random() * fxCanvas.width;
+  const speed = 45 + Math.random() * 95;
+  spawnFxParticle(
+    x,
+    -12,
+    (Math.random() - 0.5) * 18,
+    speed,
+    1.8 + Math.random() * 1.4,
+    2 + Math.random() * 2,
+    "#8eb6d8",
+    18
+  );
+}
+
+function updateFxParticles(dt) {
+  if (!fxCtx) {
+    return;
+  }
+  fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
+
+  for (let i = fxParticles.length - 1; i >= 0; i -= 1) {
+    const p = fxParticles[i];
+    p.life -= dt;
+    if (p.life <= 0) {
+      fxParticles.splice(i, 1);
+      continue;
+    }
+
+    p.vy += p.gravity * dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+
+    const alpha = Math.max(0, p.life / p.maxLife);
+    fxCtx.globalAlpha = alpha;
+    fxCtx.fillStyle = p.color;
+    fxCtx.beginPath();
+    fxCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    fxCtx.fill();
+  }
+
+  fxCtx.globalAlpha = 1;
+}
 
 function createBone(length, radius, color) {
   const mesh = new THREE.Mesh(
@@ -171,6 +491,34 @@ function createHeroPlaceholder() {
   hips.add(head);
   rig.head = head;
 
+  const heroVisor = new THREE.Mesh(
+    new THREE.BoxGeometry(0.2, 0.08, 0.03),
+    new THREE.MeshStandardMaterial({
+      color: 0x173055,
+      roughness: 0.35,
+      metalness: 0.4,
+      emissive: 0x0b1f3f,
+      emissiveIntensity: 0.4,
+    })
+  );
+  heroVisor.position.set(0, 0.91, 0.17);
+  heroVisor.castShadow = true;
+  hips.add(heroVisor);
+
+  const heroChestMark = new THREE.Mesh(
+    new THREE.BoxGeometry(0.14, 0.2, 0.03),
+    new THREE.MeshStandardMaterial({
+      color: 0xe6f0ff,
+      roughness: 0.3,
+      metalness: 0.65,
+      emissive: 0x304f82,
+      emissiveIntensity: 0.35,
+    })
+  );
+  heroChestMark.position.set(0, 0.5, 0.16);
+  heroChestMark.castShadow = true;
+  hips.add(heroChestMark);
+
   const leftLegUpper = new THREE.Group();
   leftLegUpper.position.set(-0.15, 0, 0);
   leftLegUpper.add(createJoint(0.08, 0xb8c9e9));
@@ -196,7 +544,7 @@ function createHeroPlaceholder() {
   rightLegUpper.add(rightLegLower);
 
   const leftArmUpper = new THREE.Group();
-  leftArmUpper.position.set(-0.3, 0.65, 0);
+  leftArmUpper.position.set(0.3, 0.65, 0);
   leftArmUpper.add(createJoint(0.07, 0xb6cbff));
   leftArmUpper.add(createBone(0.42, 0.055, 0xb6cbff));
   hips.add(leftArmUpper);
@@ -208,7 +556,7 @@ function createHeroPlaceholder() {
   leftArmUpper.add(leftArmLower);
 
   const rightArmUpper = new THREE.Group();
-  rightArmUpper.position.set(0.3, 0.65, 0);
+  rightArmUpper.position.set(-0.3, 0.65, 0);
   rightArmUpper.add(createJoint(0.07, 0xb6cbff));
   rightArmUpper.add(createBone(0.42, 0.055, 0xb6cbff));
   hips.add(rightArmUpper);
@@ -227,9 +575,23 @@ function createHeroPlaceholder() {
       roughness: 0.25,
     })
   );
-  sword.position.set(0, -0.5, 0.08);
+  sword.position.set(0.07, -0.28, 0.12);
+  sword.rotation.set(-0.35, 0, 0.12);
   sword.castShadow = true;
   rightArmLower.add(sword);
+
+  const hilt = new THREE.Mesh(
+    new THREE.BoxGeometry(0.2, 0.04, 0.1),
+    new THREE.MeshStandardMaterial({
+      color: 0x6d7e97,
+      roughness: 0.35,
+      metalness: 0.5,
+    })
+  );
+  hilt.position.set(0.07, -0.01, 0.13);
+  hilt.rotation.copy(sword.rotation);
+  hilt.castShadow = true;
+  rightArmLower.add(hilt);
 
   rig.leftLegUpper = leftLegUpper;
   rig.rightLegUpper = rightLegUpper;
@@ -278,6 +640,36 @@ function createMinotaurPlaceholder() {
   head.castShadow = true;
   hips.add(head);
   rig.head = head;
+
+  const snout = new THREE.Mesh(
+    new THREE.BoxGeometry(0.22, 0.14, 0.15),
+    new THREE.MeshStandardMaterial({
+      color: 0x5e4033,
+      roughness: 0.85,
+      metalness: 0.02,
+    })
+  );
+  snout.position.set(0, 1.2, 0.26);
+  snout.castShadow = true;
+  hips.add(snout);
+
+  const leftEye = new THREE.Mesh(
+    new THREE.SphereGeometry(0.028, 8, 6),
+    new THREE.MeshStandardMaterial({
+      color: 0xffb36b,
+      emissive: 0x8a3d00,
+      emissiveIntensity: 0.7,
+      roughness: 0.25,
+      metalness: 0.1,
+    })
+  );
+  leftEye.position.set(-0.1, 1.29, 0.22);
+  leftEye.castShadow = true;
+  hips.add(leftEye);
+
+  const rightEye = leftEye.clone();
+  rightEye.position.x = 0.1;
+  hips.add(rightEye);
 
   const hornGeo = new THREE.ConeGeometry(0.08, 0.34, 8);
   const hornMat = new THREE.MeshStandardMaterial({
@@ -453,6 +845,22 @@ function resetBattle() {
   minotaur.mesh.position.set(0, 0, -7);
   minotaur.mesh.rotation.set(0, 0, 0);
 
+  outcomeState = "none";
+  outcomePulse = 0;
+  previousOutcomeState = "none";
+  winFireworkTimer = 0;
+  loseDriftTimer = 0;
+  hitFlashAlpha = 0;
+  cameraShakeTime = 0;
+  cameraShakeStrength = 0;
+  hitStopTimer = 0;
+  fxParticles.length = 0;
+  outcomeOverlay.style.opacity = "0";
+  outcomeText.style.opacity = "0";
+  outcomeText.style.transform = "translate(-50%, -50%) scale(0.9)";
+  outcomeText.textContent = "";
+  hitFlash.style.opacity = "0";
+
   statusEl.textContent = "전투 시작";
 }
 
@@ -471,6 +879,9 @@ function takeHeroDamage(amount) {
   if (hero.hp <= 0) {
     hero.dead = true;
     hero.state = "dead";
+    outcomeState = "lose";
+    outcomePulse = 0;
+    outcomeText.textContent = "DEFEAT";
     setStatus("패배! R로 재시작");
   }
 }
@@ -484,6 +895,9 @@ function takeMinotaurDamage(amount) {
   if (minotaur.hp <= 0) {
     minotaur.dead = true;
     minotaur.state = "dead";
+    outcomeState = "win";
+    outcomePulse = 0;
+    outcomeText.textContent = "VICTORY";
     setStatus("승리! R로 재시작");
   }
 }
@@ -512,6 +926,8 @@ function performHeroHitCheck() {
   }
   takeMinotaurDamage(34);
   minotaur.mesh.position.addScaledVector(tmpVecA, 0.4);
+  triggerHitImpact(0.62, "rgba(255,240,210,0.9)");
+  playHitSound(false);
 }
 
 function performMinotaurHitCheck() {
@@ -527,19 +943,43 @@ function performMinotaurHitCheck() {
   }
   takeHeroDamage(24);
   hero.mesh.position.addScaledVector(tmpVecA, 0.45);
+  triggerHitImpact(0.92, "rgba(255,125,125,0.92)");
+  playHitSound(true);
+}
+
+function normalizeAngle(angle) {
+  let wrapped = angle;
+  while (wrapped > Math.PI) {
+    wrapped -= Math.PI * 2;
+  }
+  while (wrapped < -Math.PI) {
+    wrapped += Math.PI * 2;
+  }
+  return wrapped;
+}
+
+function rotateYawToward(currentYaw, targetYaw, maxStep) {
+  const delta = normalizeAngle(targetYaw - currentYaw);
+  const clamped = Math.max(-maxStep, Math.min(maxStep, delta));
+  return currentYaw + clamped;
 }
 
 function animateHero(time, dt) {
   const rig = hero.rig;
 
   if (hero.state === "dead") {
-    rig.hips.rotation.z = 1.15;
-    rig.leftArmUpper.rotation.x = 0.9;
-    rig.rightArmUpper.rotation.x = 0.5;
-    rig.leftLegUpper.rotation.x = -0.3;
-    rig.rightLegUpper.rotation.x = 0.2;
+    rig.hips.rotation.x = 0.08;
+    rig.hips.rotation.z = 0;
+    rig.torso.rotation.y = 0;
+    rig.leftArmUpper.rotation.x = -0.35;
+    rig.rightArmUpper.rotation.x = -0.2;
+    rig.leftLegUpper.rotation.x = 0.05;
+    rig.rightLegUpper.rotation.x = -0.05;
     return;
   }
+
+  rig.hips.rotation.x = 0;
+  rig.hips.rotation.z = 0;
 
   const speedFactor = hero.state === "run" ? 1 : 0;
   const cycle = Math.sin(time * 9);
@@ -563,21 +1003,25 @@ function animateHero(time, dt) {
 
   if (hero.state === "attack") {
     const progress = 1 - hero.attackTimer / hero.attackDuration;
-    if (progress < 0.35) {
-      rig.rightArmUpper.rotation.x = -1.2;
-      rig.rightArmLower.rotation.x = -0.35;
-      rig.torso.rotation.y = -0.38;
+    if (progress < 0.42) {
+      const windup = progress / 0.42;
+      rig.rightArmUpper.rotation.x = -2.15 + windup * 0.15;
+      rig.rightArmLower.rotation.x = -1.05 + windup * 0.12;
+      rig.torso.rotation.y = -0.42;
+      rig.torso.rotation.x = 0.1;
     } else {
-      const swing = Math.min(1, (progress - 0.35) / 0.65);
-      rig.rightArmUpper.rotation.x = 1.75 - swing * 0.3;
-      rig.rightArmLower.rotation.x = 0.65;
-      rig.torso.rotation.y = 0.65 - swing * 0.25;
+      const swing = Math.min(1, (progress - 0.42) / 0.58);
+      rig.rightArmUpper.rotation.x = -2.0 + swing * 2.85;
+      rig.rightArmLower.rotation.x = -0.95 + swing * 1.65;
+      rig.torso.rotation.y = -0.2 + swing * 0.85;
+      rig.torso.rotation.x = 0.1 - swing * 0.2;
     }
     rig.leftArmUpper.rotation.x = -0.2;
     return;
   }
 
   rig.torso.rotation.y = 0;
+  rig.torso.rotation.x = 0;
   rig.rightArmUpper.rotation.z = 0;
 }
 
@@ -585,13 +1029,18 @@ function animateMinotaur(time, dt) {
   const rig = minotaur.rig;
 
   if (minotaur.state === "dead") {
-    rig.hips.rotation.z = -1.0;
-    rig.rightArmUpper.rotation.x = 0.6;
-    rig.leftArmUpper.rotation.x = 0.4;
-    rig.rightLegUpper.rotation.x = 0.2;
-    rig.leftLegUpper.rotation.x = -0.15;
+    rig.hips.rotation.x = 0.05;
+    rig.hips.rotation.z = 0;
+    rig.torso.rotation.y = 0;
+    rig.rightArmUpper.rotation.x = -0.25;
+    rig.leftArmUpper.rotation.x = -0.2;
+    rig.rightLegUpper.rotation.x = 0.04;
+    rig.leftLegUpper.rotation.x = -0.04;
     return;
   }
+
+  rig.hips.rotation.x = 0;
+  rig.hips.rotation.z = 0;
 
   const runFactor = minotaur.state === "run" ? 1 : 0;
   const cycle = Math.sin(time * 7);
@@ -665,23 +1114,62 @@ function updateHero(dt, time) {
     return;
   }
 
-  const moveX = (keyState.KeyD ? 1 : 0) - (keyState.KeyA ? 1 : 0);
-  const moveZ = (keyState.KeyS ? 1 : 0) - (keyState.KeyW ? 1 : 0);
-  tmpVecA.set(moveX, 0, moveZ);
+  const inputForward = (keyState.KeyW ? 1 : 0) - (keyState.KeyS ? 1 : 0);
+  const inputRight = (keyState.KeyD ? 1 : 0) - (keyState.KeyA ? 1 : 0);
+  moveInput.set(inputRight, 0, inputForward);
+  const lockOnActive = !hero.dead && !minotaur.dead;
 
-  if (tmpVecA.lengthSq() > 0) {
-    tmpVecA.normalize();
+  if (moveInput.lengthSq() > 0) {
+    computeCameraRelativeMoveVector(moveInput.x, moveInput.z, tmpVecA);
+
     const isRunning = !!keyState.ShiftLeft || !!keyState.ShiftRight;
     const speed = hero.speed * (isRunning ? hero.runMultiplier : 1);
     hero.mesh.position.addScaledVector(tmpVecA, speed * dt);
-    hero.mesh.rotation.y = Math.atan2(tmpVecA.x, tmpVecA.z);
     hero.state = "run";
     clampToArena(hero.mesh, 15.8);
+
+    if (!lockOnActive) {
+      hero.mesh.rotation.y = Math.atan2(tmpVecA.x, tmpVecA.z);
+    }
   } else {
     hero.state = "idle";
   }
 
+  if (lockOnActive) {
+    toEnemyFlat.subVectors(minotaur.mesh.position, hero.mesh.position);
+    toEnemyFlat.y = 0;
+    if (toEnemyFlat.lengthSq() > 1e-6) {
+      const targetYaw = Math.atan2(toEnemyFlat.x, toEnemyFlat.z);
+      hero.mesh.rotation.y = rotateYawToward(hero.mesh.rotation.y, targetYaw, dt * 8.2);
+    }
+  }
+
   animateHero(time, dt);
+}
+
+function computeCameraRelativeMoveVector(inputRight, inputForward, outVector) {
+  outVector.set(0, 0, 0);
+  if (inputRight === 0 && inputForward === 0) {
+    return outVector;
+  }
+
+  camera.getWorldDirection(cameraForward);
+  cameraForward.y = 0;
+  if (cameraForward.lengthSq() < 1e-6) {
+    cameraForward.set(0, 0, -1);
+  } else {
+    cameraForward.normalize();
+  }
+
+  cameraRight.crossVectors(cameraForward, upAxis).normalize();
+  outVector
+    .addScaledVector(cameraRight, inputRight)
+    .addScaledVector(cameraForward, inputForward);
+
+  if (outVector.lengthSq() > 0) {
+    outVector.normalize();
+  }
+  return outVector;
 }
 
 function updateMinotaur(dt, time) {
@@ -738,11 +1226,120 @@ function updateMinotaur(dt, time) {
 }
 
 function updateCamera() {
+  const shakeOffsetX = cameraShakeTime > 0 ? (Math.random() - 0.5) * cameraShakeStrength : 0;
+  const shakeOffsetY = cameraShakeTime > 0 ? (Math.random() - 0.5) * cameraShakeStrength * 0.6 : 0;
+  const shakeOffsetZ = cameraShakeTime > 0 ? (Math.random() - 0.5) * cameraShakeStrength : 0;
+  const lockOnActive = !hero.dead && !minotaur.dead;
+
+  if (lockOnActive) {
+    toEnemyFlat.subVectors(minotaur.mesh.position, hero.mesh.position);
+    toEnemyFlat.y = 0;
+
+    if (toEnemyFlat.lengthSq() < 1e-6) {
+      toEnemyFlat.set(Math.sin(hero.mesh.rotation.y), 0, Math.cos(hero.mesh.rotation.y));
+    } else {
+      toEnemyFlat.normalize();
+    }
+
+    cameraRight.crossVectors(toEnemyFlat, upAxis).normalize();
+
+    cameraDesiredPosition
+      .copy(hero.mesh.position)
+      .addScaledVector(toEnemyFlat, -7.4)
+      .addScaledVector(cameraRight, 1.2);
+    cameraDesiredPosition.y = hero.mesh.position.y + 4.6;
+
+    cameraLookTarget
+      .copy(hero.mesh.position)
+      .addScaledVector(toEnemyFlat, 2.6)
+      .addScaledVector(upAxis, 1.25);
+
+    camera.position.lerp(cameraDesiredPosition, 0.12);
+    camera.position.x += shakeOffsetX;
+    camera.position.y += shakeOffsetY;
+    camera.position.z += shakeOffsetZ;
+    camera.lookAt(cameraLookTarget);
+    return;
+  }
+
   tmpVecA.set(0, 5.4, 8.6).applyAxisAngle(upAxis, hero.mesh.rotation.y);
   tmpVecB.copy(hero.mesh.position).add(tmpVecA);
   camera.position.lerp(tmpVecB, 0.09);
+  camera.position.x += shakeOffsetX;
+  camera.position.y += shakeOffsetY;
+  camera.position.z += shakeOffsetZ;
   camera.lookAt(hero.mesh.position.x, hero.mesh.position.y + 1.2, hero.mesh.position.z);
 }
+
+const testMoveVec = new THREE.Vector3();
+
+window.__AegisTestAPI = {
+  resetBattle,
+  step(dt, time) {
+    if (hitStopTimer > 0) {
+      hitStopTimer = Math.max(0, hitStopTimer - dt);
+    } else {
+      updateHero(dt, time);
+      updateMinotaur(dt, time);
+    }
+    updateCombatFeedback(dt);
+    updateCamera();
+    updateHud();
+    updateOutcomeEffects(dt, time);
+  },
+  setKeys(nextKeys) {
+    Object.keys(keyState).forEach((key) => {
+      keyState[key] = false;
+    });
+    Object.keys(nextKeys).forEach((key) => {
+      keyState[key] = !!nextKeys[key];
+    });
+  },
+  setHeroDead() {
+    hero.hp = 0;
+    hero.dead = true;
+    hero.state = "dead";
+  },
+  setMinotaurDead() {
+    minotaur.hp = 0;
+    minotaur.dead = true;
+    minotaur.state = "dead";
+  },
+  setHeroPosition(x, z) {
+    hero.mesh.position.set(x, 0, z);
+  },
+  setHeroRotationY(yaw) {
+    hero.mesh.rotation.y = yaw;
+  },
+  setMinotaurPosition(x, z) {
+    minotaur.mesh.position.set(x, 0, z);
+  },
+  setCamera(position, lookAt) {
+    camera.position.set(position.x, position.y, position.z);
+    camera.lookAt(lookAt.x, lookAt.y, lookAt.z);
+  },
+  getHeroPosition() {
+    return hero.mesh.position.clone();
+  },
+  getHeroDeadPose() {
+    return {
+      hipsX: hero.rig.hips.rotation.x,
+      hipsZ: hero.rig.hips.rotation.z,
+    };
+  },
+  getMinotaurDeadPose() {
+    return {
+      hipsX: minotaur.rig.hips.rotation.x,
+      hipsZ: minotaur.rig.hips.rotation.z,
+    };
+  },
+  getCameraForward() {
+    return camera.getWorldDirection(new THREE.Vector3());
+  },
+  computeMoveVector(inputRight, inputForward) {
+    return computeCameraRelativeMoveVector(inputRight, inputForward, testMoveVec).clone();
+  },
+};
 
 function updateHud() {
   const heroRatio = (hero.hp / hero.maxHp) * 100;
@@ -763,16 +1360,97 @@ function updateHud() {
   }
 }
 
+function updateCombatFeedback(dt) {
+  if (cameraShakeTime > 0) {
+    cameraShakeTime = Math.max(0, cameraShakeTime - dt);
+    cameraShakeStrength = Math.max(0, cameraShakeStrength - dt * 1.4);
+  }
+
+  if (hitFlashAlpha > 0) {
+    hitFlashAlpha = Math.max(0, hitFlashAlpha - dt * 3.4);
+    hitFlash.style.opacity = String(hitFlashAlpha);
+  } else {
+    hitFlash.style.opacity = "0";
+  }
+}
+
+function updateOutcomeEffects(dt, elapsed) {
+  if (outcomeState !== previousOutcomeState) {
+    if (outcomeState === "win") {
+      playOutcomeStinger("win");
+      for (let i = 0; i < 2; i += 1) {
+        spawnVictoryBurst();
+      }
+    } else if (outcomeState === "lose") {
+      playOutcomeStinger("lose");
+      for (let i = 0; i < 45; i += 1) {
+        spawnDefeatDrift();
+      }
+    }
+    previousOutcomeState = outcomeState;
+  }
+
+  if (outcomeState === "none") {
+    outcomeOverlay.style.opacity = "0";
+    outcomeText.style.opacity = "0";
+    updateFxParticles(dt);
+    return;
+  }
+
+  outcomePulse = Math.min(1.6, outcomePulse + dt);
+  const pulse = 0.5 + Math.sin(elapsed * 6.2) * 0.5;
+
+  if (outcomeState === "win") {
+    winFireworkTimer -= dt;
+    if (winFireworkTimer <= 0) {
+      spawnVictoryBurst();
+      winFireworkTimer = 0.5 + Math.random() * 0.35;
+    }
+
+    outcomeOverlay.style.background =
+      "radial-gradient(circle at center, rgba(255,232,154,0.35) 0%, rgba(255,214,112,0.16) 45%, rgba(16,20,26,0.05) 100%)";
+    outcomeOverlay.style.opacity = String(Math.min(0.88, 0.3 + outcomePulse * 0.35));
+    outcomeText.style.color = "#ffe28f";
+    outcomeText.style.textShadow = "0 0 22px rgba(255,225,120,0.65)";
+    outcomeText.style.opacity = "1";
+    outcomeText.style.transform = `translate(-50%, -50%) scale(${1 + pulse * 0.04})`;
+    updateFxParticles(dt);
+    return;
+  }
+
+  loseDriftTimer -= dt;
+  if (loseDriftTimer <= 0) {
+    spawnDefeatDrift();
+    loseDriftTimer = 0.05;
+  }
+
+  outcomeOverlay.style.background =
+    "radial-gradient(circle at center, rgba(255,120,120,0.1) 0%, rgba(110,18,18,0.38) 52%, rgba(20,0,0,0.72) 100%)";
+  outcomeOverlay.style.opacity = String(Math.min(0.92, 0.42 + outcomePulse * 0.3));
+  outcomeText.style.color = "#ff9a9a";
+  outcomeText.style.textShadow = "0 0 20px rgba(255,90,90,0.55)";
+  outcomeText.style.opacity = "1";
+  outcomeText.style.transform = `translate(-50%, -50%) scale(${1 + pulse * 0.03})`;
+  updateFxParticles(dt);
+}
+
 const clock = new THREE.Clock();
 
 function tick() {
   const dt = Math.min(clock.getDelta(), 0.033);
   const elapsed = clock.elapsedTime;
 
-  updateHero(dt, elapsed);
-  updateMinotaur(dt, elapsed);
+  if (hitStopTimer > 0) {
+    hitStopTimer = Math.max(0, hitStopTimer - dt);
+  } else {
+    updateHero(dt, elapsed);
+    updateMinotaur(dt, elapsed);
+  }
+
+  updateCombatFeedback(dt);
   updateCamera();
   updateHud();
+  updateOutcomeEffects(dt, elapsed);
 
   runeRing.material.emissiveIntensity = 0.6 + Math.sin(elapsed * 2.2) * 0.15;
   renderer.render(scene, camera);
@@ -786,6 +1464,7 @@ window.addEventListener("resize", () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  resizeFxCanvas();
 });
 
 // Replace guide:

@@ -19,21 +19,29 @@ python3 -m http.server 5173
 1. `file:///.../index.html`로 열지 말고 반드시 로컬 서버로 실행
 2. 주소창을 `http://127.0.0.1:5173`로 직접 입력
 3. Console에 `THREE global not found`가 뜨면 CDN 로드 실패 상태
-4. CDN 실패 시 로컬 파일로 대체
+4. 현재 `index.html`은 Three.js를 CDN 폴백 순서로 자동 로드
 
 ```bash
 cd "/Users/macmini/Desktop/Game Projects/Aegis of Olympus"
-curl -L "https://unpkg.com/three@0.161.0/build/three.min.js" -o "three.min.js"
+python3 -m http.server 5173
 ```
 
-`index.html`에서 Three.js 로드 줄을 아래로 유지:
+현재 `index.html`의 로드 순서:
 
 ```html
-<script src="https://unpkg.com/three@0.161.0/build/three.min.js"></script>
-<script defer src="./main.js"></script>
+https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.min.js
+-> https://cdn.jsdelivr.net/npm/three/build/three.min.js
+-> https://unpkg.com/three/build/three.min.js
 ```
 
-오프라인 개발로 고정할 경우:
+사내망/방화벽 등으로 CDN이 모두 막힌 환경이면 로컬 파일로 고정:
+
+```bash
+cd "/Users/macmini/Desktop/Game Projects/Aegis of Olympus"
+curl -L "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.min.js" -o "three.min.js"
+```
+
+`index.html`에서 아래처럼 로드:
 
 ```html
 <script src="./three.min.js"></script>
