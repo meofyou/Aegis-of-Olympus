@@ -414,6 +414,13 @@ const HERO_MESHY_ASSETS = {
   dead: "./assets/Meshy_AI_biped/Meshy_AI_Animation_Dead_withSkin.glb",
 };
 
+const MINOTAUR_MESHY_ASSETS = {
+  walk: "./assets/minotaur_meshy/Meshy_AI_biped/Meshy_AI_Animation_Slow_Orc_Walk_withSkin.glb",
+  attack: "./assets/minotaur_meshy/Meshy_AI_biped/Meshy_AI_Animation_Attack_withSkin.glb",
+  charge: "./assets/minotaur_meshy/Meshy_AI_biped/Meshy_AI_Animation_Triple_Combo_Attack_withSkin.glb",
+};
+const MINOTAUR_MODEL_YAW_OFFSET = Math.PI;
+
 const gltfLoader = new GLTFLoader();
 const tmpQuatA = new THREE.Quaternion();
 const tmpEulerA = new THREE.Euler();
@@ -1116,6 +1123,427 @@ async function loadHeroFromMeshyPack() {
   }
 }
 
+function createMinotaurRuntimeAxe() {
+  const axeGroup = new THREE.Group();
+
+  const handle = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.04, 0.045, 1.12, 10),
+    new THREE.MeshStandardMaterial({
+      color: 0x5a3c25,
+      roughness: 0.85,
+      metalness: 0.06,
+    })
+  );
+  handle.castShadow = true;
+  handle.receiveShadow = true;
+  axeGroup.add(handle);
+
+  const head = new THREE.Mesh(
+    new THREE.BoxGeometry(0.46, 0.22, 0.12),
+    new THREE.MeshStandardMaterial({
+      color: 0xc7cdd9,
+      roughness: 0.18,
+      metalness: 0.82,
+      emissive: 0x1a1e2a,
+      emissiveIntensity: 0.08,
+    })
+  );
+  head.position.set(0.2, -0.44, 0);
+  head.castShadow = true;
+  head.receiveShadow = true;
+  axeGroup.add(head);
+
+  const spike = new THREE.Mesh(
+    new THREE.ConeGeometry(0.05, 0.2, 8),
+    new THREE.MeshStandardMaterial({
+      color: 0xaeb5c2,
+      roughness: 0.28,
+      metalness: 0.75,
+    })
+  );
+  spike.position.set(-0.22, -0.44, 0);
+  spike.rotation.z = Math.PI * 0.5;
+  spike.castShadow = true;
+  spike.receiveShadow = true;
+  axeGroup.add(spike);
+
+  return axeGroup;
+}
+
+function playMinotaurAction(actionName, options = {}) {
+  if (!minotaur.model.enabled || !minotaur.model.actions[actionName]) {
+    return;
+  }
+
+  const {
+    fade = 0.12,
+    restart = false,
+    loop = THREE.LoopRepeat,
+    repetitions = Infinity,
+    clampWhenFinished = false,
+    timeScale = 1,
+  } = options;
+
+  if (minotaur.model.currentAction === actionName && !restart) {
+    const current = minotaur.model.actions[actionName];
+    current.timeScale = timeScale;
+    return;
+  }
+
+  Object.entries(minotaur.model.actions).forEach(([name, action]) => {
+    if (!action) {
+      return;
+    }
+    if (name === actionName) {
+      return;
+    }
+    action.fadeOut(fade);
+  });
+
+  const next = minotaur.model.actions[actionName];
+  if (restart) {
+    next.reset();
+  }
+  next.enabled = true;
+  next.setLoop(loop, repetitions);
+  next.clampWhenFinished = clampWhenFinished;
+  next.timeScale = timeScale;
+  next.fadeIn(fade).play();
+  minotaur.model.currentAction = actionName;
+}
+
+function recoverMinotaurProceduralBones(blendRate) {
+  if (!minotaur.model.enabled || !minotaur.model.basePose || !minotaur.model.bones) {
+    return;
+  }
+
+  Object.entries(minotaur.model.bones).forEach(([key, bone]) => {
+    const base = minotaur.model.basePose[key];
+    if (!bone || !base) {
+      return;
+    }
+    bone.quaternion.slerp(base, Math.min(1, blendRate));
+  });
+}
+
+function applyMinotaurAxeSwingProcedural(progress, intensity = 1) {
+  if (!minotaur.model.enabled || !minotaur.model.basePose || !minotaur.model.bones) {
+    return;
+  }
+
+  const windupEnd = 0.38;
+  let torsoYaw;
+  let torsoPitch;
+  let armLift;
+  let forearmLift;
+  let handTwist;
+
+  if (progress < windupEnd) {
+    const t = progress / windupEnd;
+    torsoYaw = -0.24 * intensity * t;
+    torsoPitch = 0.09 * intensity * t;
+    armLift = -1.28 * intensity * t;
+    forearmLift = -0.86 * intensity * t;
+    handTwist = -0.2 * intensity * t;
+  } else {
+    const t = Math.min(1, (progress - windupEnd) / (1 - windupEnd));
+    torsoYaw = (-0.24 + t * 0.68) * intensity;
+    torsoPitch = (0.09 - t * 0.14) * intensity;
+    armLift = (-1.28 + t * 2.05) * intensity;
+    forearmLift = (-0.86 + t * 1.34) * intensity;
+    handTwist = (-0.2 + t * 0.62) * intensity;
+  }
+
+  applyBoneOffset(
+    minotaur.model.bones.spine,
+    minotaur.model.basePose.spine,
+    torsoPitch,
+    torsoYaw,
+    0
+  );
+  applyBoneOffset(
+    minotaur.model.bones.chest,
+    minotaur.model.basePose.chest,
+    torsoPitch * 0.62,
+    torsoYaw * 0.75,
+    0
+  );
+  applyBoneOffset(
+    minotaur.model.bones.rightUpperArm,
+    minotaur.model.basePose.rightUpperArm,
+    armLift,
+    0.2,
+    -0.18
+  );
+  applyBoneOffset(
+    minotaur.model.bones.rightForeArm,
+    minotaur.model.basePose.rightForeArm,
+    forearmLift,
+    0,
+    0.16
+  );
+  applyBoneOffset(
+    minotaur.model.bones.rightHand,
+    minotaur.model.basePose.rightHand,
+    0,
+    0,
+    handTwist
+  );
+}
+
+function updateMinotaurModelAnimation(dt) {
+  if (!minotaur.model.enabled || !minotaur.model.mixer) {
+    return;
+  }
+
+  const state = minotaur.state;
+  const stateChanged = minotaur.model.lastState !== state;
+
+  if (state === "dead") {
+    if (minotaur.model.actions.attack) {
+      playMinotaurAction("attack", {
+        fade: 0.16,
+        loop: THREE.LoopOnce,
+        clampWhenFinished: true,
+        timeScale: 0.42,
+      });
+    } else if (minotaur.model.actions.walk) {
+      playMinotaurAction("walk", { fade: 0.16, timeScale: 0.08 });
+    }
+    applyBoneOffset(
+      minotaur.model.bones.spine,
+      minotaur.model.basePose.spine,
+      0.32,
+      0,
+      0
+    );
+    applyBoneOffset(
+      minotaur.model.bones.chest,
+      minotaur.model.basePose.chest,
+      0.24,
+      0,
+      0
+    );
+    recoverMinotaurProceduralBones(0.08);
+    minotaur.model.lastState = state;
+    return;
+  }
+
+  if (state === "attack") {
+    if (minotaur.model.actions.attack) {
+      playMinotaurAction("attack", {
+        fade: 0.08,
+        restart: stateChanged,
+        loop: THREE.LoopOnce,
+        clampWhenFinished: true,
+        timeScale: 1.02,
+      });
+    } else if (minotaur.model.actions.walk) {
+      playMinotaurAction("walk", { fade: 0.08, timeScale: 0.68 });
+    }
+    const progress = 1 - minotaur.attackTimer / Math.max(minotaur.attackDuration, 0.001);
+    applyMinotaurAxeSwingProcedural(progress, 1);
+    minotaur.model.lastState = state;
+    return;
+  }
+
+  if (state === "charge_windup" || state === "charge") {
+    if (minotaur.model.actions.charge) {
+      playMinotaurAction("charge", {
+        fade: 0.08,
+        restart: stateChanged,
+        loop: THREE.LoopRepeat,
+        timeScale: state === "charge" ? 1.18 : 0.82,
+      });
+    } else if (minotaur.model.actions.attack) {
+      playMinotaurAction("attack", {
+        fade: 0.08,
+        restart: stateChanged,
+        loop: THREE.LoopRepeat,
+        timeScale: state === "charge" ? 1.12 : 0.74,
+      });
+    }
+    const progress = state === "charge_windup"
+      ? 1 - minotaur.chargeWindup / 0.48
+      : 1 - minotaur.chargeTimer / 0.92;
+    applyMinotaurAxeSwingProcedural(progress, 1.2);
+    minotaur.model.lastState = state;
+    return;
+  }
+
+  if (state === "slam_windup" || state === "slam") {
+    if (minotaur.model.actions.attack) {
+      playMinotaurAction("attack", {
+        fade: 0.1,
+        restart: stateChanged,
+        loop: THREE.LoopRepeat,
+        timeScale: state === "slam" ? 0.86 : 0.64,
+      });
+    }
+    applyBoneOffset(
+      minotaur.model.bones.spine,
+      minotaur.model.basePose.spine,
+      state === "slam_windup" ? 0.14 : 0.24,
+      0,
+      0
+    );
+    applyBoneOffset(
+      minotaur.model.bones.chest,
+      minotaur.model.basePose.chest,
+      state === "slam_windup" ? 0.08 : 0.18,
+      0,
+      0
+    );
+    recoverMinotaurProceduralBones(0.14);
+    minotaur.model.lastState = state;
+    return;
+  }
+
+  if (state === "run" || state === "strafe") {
+    if (minotaur.model.actions.walk) {
+      playMinotaurAction("walk", {
+        fade: 0.12,
+        timeScale: state === "run" ? 1.08 : 0.9,
+      });
+    }
+    recoverMinotaurProceduralBones(0.22);
+    minotaur.model.lastState = state;
+    return;
+  }
+
+  if (state === "hurt") {
+    if (minotaur.model.actions.attack) {
+      playMinotaurAction("attack", {
+        fade: 0.08,
+        restart: stateChanged,
+        loop: THREE.LoopOnce,
+        clampWhenFinished: true,
+        timeScale: 0.58,
+      });
+    } else if (minotaur.model.actions.walk) {
+      playMinotaurAction("walk", { fade: 0.08, timeScale: 0.2 });
+    }
+    recoverMinotaurProceduralBones(0.14);
+    minotaur.model.lastState = state;
+    return;
+  }
+
+  if (minotaur.model.actions.walk) {
+    playMinotaurAction("walk", { fade: 0.16, timeScale: 0.24 });
+  }
+  recoverMinotaurProceduralBones(0.28);
+  minotaur.model.lastState = state;
+}
+
+async function loadMinotaurFromMeshyPack() {
+  try {
+    statusEl.textContent = "미노타우르스 모델 로딩 중...";
+
+    const [walkGltf, attackGltf, chargeGltf] = await Promise.all([
+      loadGlbAsset(MINOTAUR_MESHY_ASSETS.walk),
+      loadGlbAsset(MINOTAUR_MESHY_ASSETS.attack),
+      loadGlbAsset(MINOTAUR_MESHY_ASSETS.charge),
+    ]);
+
+    const placeholderBounds = new THREE.Box3().setFromObject(minotaur.mesh);
+    const placeholderHeight = Math.max(0.001, placeholderBounds.max.y - placeholderBounds.min.y);
+
+    const visualRoot = walkGltf.scene;
+    visualRoot.traverse((obj) => {
+      if (obj.isMesh) {
+        obj.castShadow = true;
+        obj.receiveShadow = true;
+        obj.frustumCulled = false;
+      }
+    });
+
+    while (minotaur.mesh.children.length > 0) {
+      minotaur.mesh.remove(minotaur.mesh.children[0]);
+    }
+    minotaur.mesh.add(visualRoot);
+    visualRoot.rotation.y = MINOTAUR_MODEL_YAW_OFFSET;
+
+    const preScaleBox = new THREE.Box3().setFromObject(visualRoot);
+    const preSize = preScaleBox.getSize(new THREE.Vector3());
+    if (preSize.y > 1e-6) {
+      const scale = placeholderHeight / preSize.y;
+      visualRoot.scale.setScalar(scale);
+    }
+
+    const scaledBox = new THREE.Box3().setFromObject(visualRoot);
+    const center = scaledBox.getCenter(new THREE.Vector3());
+    visualRoot.position.x -= center.x;
+    visualRoot.position.z -= center.z;
+    visualRoot.position.y -= scaledBox.min.y;
+
+    const finalBounds = new THREE.Box3().setFromObject(visualRoot);
+    minotaur.model.height = Math.max(0.001, finalBounds.max.y - finalBounds.min.y);
+
+    const mixer = new THREE.AnimationMixer(minotaur.mesh);
+    const actionMap = {};
+
+    const walkClip = walkGltf.animations[0] || null;
+    const attackClip = attackGltf.animations[0] || null;
+    const chargeClip = chargeGltf.animations[0] || null;
+
+    if (walkClip) {
+      actionMap.walk = mixer.clipAction(walkClip, minotaur.mesh);
+    }
+    if (attackClip) {
+      actionMap.attack = mixer.clipAction(attackClip, minotaur.mesh);
+      minotaur.attackDuration = Math.max(0.62, Math.min(1.45, attackClip.duration || minotaur.attackDuration));
+    }
+    if (chargeClip) {
+      actionMap.charge = mixer.clipAction(chargeClip, minotaur.mesh);
+    }
+
+    const bones = {
+      spine: findBoneByAliases(minotaur.mesh, ["spine2", "spine_02", "spine1", "spine", "chest"]),
+      chest: findBoneByAliases(minotaur.mesh, ["chest", "upperchest", "spine3", "spine_03"]),
+      rightUpperArm: findBoneByAliases(minotaur.mesh, ["rightupperarm", "upperarm_r", "arm_r", "r_arm", "rightarm"]),
+      rightForeArm: findBoneByAliases(minotaur.mesh, ["rightforearm", "lowerarm_r", "forearm_r", "r_forearm"]),
+      rightHand: findBoneByAliases(minotaur.mesh, ["righthand", "hand_r", "r_hand"]),
+    };
+
+    minotaur.model.enabled = true;
+    minotaur.model.mixer = mixer;
+    minotaur.model.actions = actionMap;
+    minotaur.model.currentAction = "";
+    minotaur.model.lastState = "";
+    minotaur.model.bones = bones;
+    minotaur.model.basePose = {
+      spine: bones.spine ? bones.spine.quaternion.clone() : null,
+      chest: bones.chest ? bones.chest.quaternion.clone() : null,
+      rightUpperArm: bones.rightUpperArm ? bones.rightUpperArm.quaternion.clone() : null,
+      rightForeArm: bones.rightForeArm ? bones.rightForeArm.quaternion.clone() : null,
+      rightHand: bones.rightHand ? bones.rightHand.quaternion.clone() : null,
+    };
+
+    const runtimeAxe = createMinotaurRuntimeAxe();
+    runtimeAxe.name = "RuntimeMinotaurAxe";
+    const axeAttachTarget = bones.rightHand || bones.rightForeArm || bones.rightUpperArm;
+    if (axeAttachTarget) {
+      axeAttachTarget.add(runtimeAxe);
+      runtimeAxe.position.set(0.08, -0.03, 0.04);
+      runtimeAxe.rotation.set(-1.35, 0.22, 0.1);
+    } else {
+      minotaur.mesh.add(runtimeAxe);
+      runtimeAxe.position.set(0.52, 1.2, 0.16);
+      runtimeAxe.rotation.set(-1.35, 0.22, 0.1);
+    }
+    minotaur.model.axe = runtimeAxe;
+
+    if (minotaur.model.actions.walk) {
+      playMinotaurAction("walk", { fade: 0.01, restart: true, timeScale: 0.24 });
+    }
+
+    statusEl.textContent = "미노타우르스 모델 적용 완료";
+  } catch (error) {
+    console.error("[Minotaur Model Load Error]", error);
+    statusEl.textContent = "미노타우르스 모델 로드 실패. 플레이스홀더 유지";
+  }
+}
+
 function createBone(length, radius, color) {
   const mesh = new THREE.Mesh(
     new THREE.CylinderGeometry(radius, radius, length, 10),
@@ -1586,6 +2014,17 @@ const minotaur = {
   retreatTimer: 0,
   desiredRange: 2.6,
   dead: false,
+  model: {
+    enabled: false,
+    mixer: null,
+    actions: {},
+    currentAction: "",
+    lastState: "",
+    bones: null,
+    basePose: null,
+    axe: null,
+    height: 2.6,
+  },
 };
 
 function resetBattle() {
@@ -1664,6 +2103,15 @@ function resetBattle() {
     recoverHeroProceduralBones(1);
   }
 
+  if (minotaur.model.enabled) {
+    minotaur.model.currentAction = "";
+    minotaur.model.lastState = "";
+    if (minotaur.model.actions.walk) {
+      playMinotaurAction("walk", { fade: 0.01, restart: true, timeScale: 0.24 });
+    }
+    recoverMinotaurProceduralBones(1);
+  }
+
   if (audioCtx) {
     startBackgroundMusic();
   }
@@ -1671,8 +2119,13 @@ function resetBattle() {
   statusEl.textContent = "전투 시작";
 }
 
+async function loadCharacterModels() {
+  await loadMinotaurFromMeshyPack();
+  await loadHeroFromMeshyPack();
+}
+
 resetBattle();
-loadHeroFromMeshyPack();
+loadCharacterModels();
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -1975,6 +2428,11 @@ function animateHero(time, dt) {
 }
 
 function animateMinotaur(time, dt) {
+  if (minotaur.model.enabled) {
+    updateMinotaurModelAnimation(dt);
+    return;
+  }
+
   const rig = minotaur.rig;
 
   if (minotaur.state === "dead") {
@@ -2247,6 +2705,10 @@ function updateMinotaur(dt, time) {
     minotaur.state = "idle";
     animateMinotaur(time, dt);
     return;
+  }
+
+  if (minotaur.model.enabled && minotaur.model.mixer) {
+    minotaur.model.mixer.update(dt);
   }
 
   minotaur.attackCooldown = Math.max(0, minotaur.attackCooldown - dt);
