@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Myth Prototype - Hero vs Minotaur</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div id="hud">
+      <div class="bar-wrap">
+        <span>Hero</span>
+        <div class="bar-bg"><div id="hero-hp" class="bar-fill hero"></div></div>
+      </div>
+      <div class="bar-wrap">
+        <span>Minotaur</span>
+        <div class="bar-bg"><div id="minotaur-hp" class="bar-fill minotaur"></div></div>
+      </div>
+      <div id="tips">
+        <p><b>이동</b>: WASD | <b>달리기</b>: Shift</p>
+        <p><b>공격</b>: J 또는 마우스 좌클릭 | <b>재시작</b>: R</p>
+      </div>
+      <div id="status">전투 시작</div>
+    </div>
+
+    <script src="https://unpkg.com/three@0.161.0/build/three.min.js"></script>
+    <script defer src="./main.js"></script>
+  </body>
+</html>
