@@ -17,12 +17,12 @@ const camera = new THREE.PerspectiveCamera(
   60,
   window.innerWidth / window.innerHeight,
   0.1,
-  250
+  140
 );
 camera.position.set(0, 6, 12);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -36,7 +36,7 @@ scene.add(hemiLight);
 const sun = new THREE.DirectionalLight(0xfff3d8, 1.7);
 sun.position.set(9, 16, 7);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(1024, 1024);
 sun.shadow.camera.near = 0.1;
 sun.shadow.camera.far = 50;
 sun.shadow.camera.left = -18;
@@ -45,12 +45,108 @@ sun.shadow.camera.top = 18;
 sun.shadow.camera.bottom = -18;
 scene.add(sun);
 
+function createArenaFloorTexture() {
+  const size = 512;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+
+  const base = ctx.createLinearGradient(0, 0, 0, size);
+  base.addColorStop(0, "#7f8898");
+  base.addColorStop(1, "#5f6878");
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, size, size);
+
+  const tile = 64;
+  for (let y = 0; y < size; y += tile) {
+    for (let x = 0; x < size; x += tile) {
+      const shade = 92 + ((x / tile + y / tile) % 2) * 12;
+      ctx.fillStyle = `rgb(${shade}, ${shade + 6}, ${shade + 14})`;
+      ctx.fillRect(x, y, tile, tile);
+      ctx.strokeStyle = "rgba(40,45,54,0.5)";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x + 1, y + 1, tile - 2, tile - 2);
+    }
+  }
+
+  for (let i = 0; i < 900; i += 1) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    const a = Math.random() * Math.PI * 2;
+    const len = 4 + Math.random() * 12;
+    ctx.strokeStyle = `rgba(30, 34, 40, ${0.06 + Math.random() * 0.08})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len);
+    ctx.stroke();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(2.2, 2.2);
+  texture.anisotropy = 4;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function createPillarTexture() {
+  const width = 256;
+  const height = 512;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+
+  const grad = ctx.createLinearGradient(0, 0, width, 0);
+  grad.addColorStop(0, "#8e9198");
+  grad.addColorStop(0.5, "#a7aab1");
+  grad.addColorStop(1, "#7e828a");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, width, height);
+
+  for (let y = 0; y < height; y += 96) {
+    ctx.strokeStyle = "rgba(56,60,68,0.45)";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(0, y + 10);
+    ctx.lineTo(width, y + 10);
+    ctx.stroke();
+  }
+
+  for (let i = 0; i < 700; i += 1) {
+    const x = Math.random() * width;
+    const y = Math.random() * height;
+    const len = 8 + Math.random() * 18;
+    ctx.strokeStyle = `rgba(70,74,82,${0.08 + Math.random() * 0.09})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + (Math.random() - 0.5) * 8, y + len);
+    ctx.stroke();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(1, 1.6);
+  texture.anisotropy = 4;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+const arenaFloorTexture = createArenaFloorTexture();
+const pillarTexture = createPillarTexture();
+
 const ground = new THREE.Mesh(
-  new THREE.CylinderGeometry(17, 17.5, 0.3, 48),
+  new THREE.CylinderGeometry(17, 17.5, 0.3, 36),
   new THREE.MeshStandardMaterial({
-    color: 0x2a2e39,
-    roughness: 0.9,
-    metalness: 0.05,
+    map: arenaFloorTexture,
+    color: 0xc8cfdb,
+    roughness: 0.92,
+    metalness: 0.03,
   })
 );
 ground.position.y = -0.16;
@@ -58,7 +154,7 @@ ground.receiveShadow = true;
 scene.add(ground);
 
 const runeRing = new THREE.Mesh(
-  new THREE.TorusGeometry(16.2, 0.08, 8, 96),
+  new THREE.TorusGeometry(16.2, 0.08, 8, 64),
   new THREE.MeshStandardMaterial({
     color: 0x96bfff,
     emissive: 0x24477d,
@@ -74,19 +170,143 @@ scene.add(runeRing);
 const arenaColumns = new THREE.Group();
 const pillarGeo = new THREE.CylinderGeometry(0.52, 0.62, 3.8, 8);
 const pillarMat = new THREE.MeshStandardMaterial({
-  color: 0x666f84,
-  roughness: 0.78,
-  metalness: 0.1,
+  map: pillarTexture,
+  color: 0xb8bec9,
+  roughness: 0.82,
+  metalness: 0.06,
 });
 for (let i = 0; i < 10; i += 1) {
   const pillar = new THREE.Mesh(pillarGeo, pillarMat);
   const angle = (i / 10) * Math.PI * 2;
   pillar.position.set(Math.sin(angle) * 15.4, 1.9, Math.cos(angle) * 15.4);
-  pillar.castShadow = true;
+  pillar.castShadow = false;
   pillar.receiveShadow = true;
   arenaColumns.add(pillar);
 }
 scene.add(arenaColumns);
+
+const arenaWall = new THREE.Mesh(
+  new THREE.CylinderGeometry(20.2, 20.8, 6.4, 40, 1, true),
+  new THREE.MeshStandardMaterial({
+    color: 0x7c8089,
+    roughness: 0.88,
+    metalness: 0.06,
+    side: THREE.DoubleSide,
+  })
+);
+arenaWall.position.y = 2.8;
+arenaWall.receiveShadow = true;
+scene.add(arenaWall);
+
+const innerTrim = new THREE.Mesh(
+  new THREE.TorusGeometry(19.5, 0.16, 10, 64),
+  new THREE.MeshStandardMaterial({
+    color: 0xd2b46f,
+    roughness: 0.5,
+    metalness: 0.35,
+    emissive: 0x463719,
+    emissiveIntensity: 0.15,
+  })
+);
+innerTrim.rotation.x = Math.PI / 2;
+innerTrim.position.y = 0.2;
+scene.add(innerTrim);
+
+const stands = new THREE.Group();
+for (let i = 0; i < 4; i += 1) {
+  const stand = new THREE.Mesh(
+    new THREE.CylinderGeometry(19 + i * 1.25, 19.6 + i * 1.25, 0.65, 36, 1, true),
+    new THREE.MeshStandardMaterial({
+      color: 0x6a707a,
+      roughness: 0.86,
+      metalness: 0.05,
+      side: THREE.DoubleSide,
+    })
+  );
+  stand.position.y = 0.45 + i * 0.68;
+  stand.receiveShadow = true;
+  stands.add(stand);
+}
+scene.add(stands);
+
+const bannerGroup = new THREE.Group();
+for (let i = 0; i < 8; i += 1) {
+  const angle = (i / 8) * Math.PI * 2;
+  const x = Math.sin(angle) * 18.6;
+  const z = Math.cos(angle) * 18.6;
+
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.05, 0.05, 3.2, 8),
+    new THREE.MeshStandardMaterial({
+      color: 0xc9a869,
+      roughness: 0.35,
+      metalness: 0.62,
+    })
+  );
+  pole.position.set(x, 4.7, z);
+  pole.castShadow = true;
+  bannerGroup.add(pole);
+
+  const cloth = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.2, 1.8),
+    new THREE.MeshStandardMaterial({
+      color: i % 2 === 0 ? 0x942f2f : 0x2d4f8e,
+      roughness: 0.9,
+      metalness: 0.02,
+      side: THREE.DoubleSide,
+    })
+  );
+  cloth.position.set(x, 3.9, z);
+  cloth.lookAt(0, 3.9, 0);
+  cloth.castShadow = false;
+  bannerGroup.add(cloth);
+}
+scene.add(bannerGroup);
+
+const slamRangeIndicator = new THREE.Mesh(
+  new THREE.RingGeometry(2.95, 3.25, 48),
+  new THREE.MeshBasicMaterial({
+    color: 0xff5b5b,
+    transparent: true,
+    opacity: 0.78,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  })
+);
+slamRangeIndicator.rotation.x = -Math.PI / 2;
+slamRangeIndicator.position.y = 0.045;
+slamRangeIndicator.visible = false;
+scene.add(slamRangeIndicator);
+
+const chargeLaneIndicator = new THREE.Mesh(
+  new THREE.PlaneGeometry(1.8, 1),
+  new THREE.MeshBasicMaterial({
+    color: 0xff9248,
+    transparent: true,
+    opacity: 0.68,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  })
+);
+chargeLaneIndicator.rotation.x = -Math.PI / 2;
+chargeLaneIndicator.position.y = 0.05;
+chargeLaneIndicator.visible = false;
+scene.add(chargeLaneIndicator);
+
+const slamImpactRing = new THREE.Mesh(
+  new THREE.RingGeometry(0.55, 0.88, 40),
+  new THREE.MeshBasicMaterial({
+    color: 0xffb37f,
+    transparent: true,
+    opacity: 0.86,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  })
+);
+slamImpactRing.rotation.x = -Math.PI / 2;
+slamImpactRing.position.y = 0.052;
+slamImpactRing.visible = false;
+scene.add(slamImpactRing);
 
 const hudHeroHp = document.getElementById("hero-hp");
 const hudMinotaurHp = document.getElementById("minotaur-hp");
@@ -120,6 +340,27 @@ outcomeText.style.pointerEvents = "none";
 outcomeText.style.zIndex = "13";
 document.body.appendChild(outcomeText);
 
+const warningBanner = document.createElement("div");
+warningBanner.style.position = "fixed";
+warningBanner.style.left = "50%";
+warningBanner.style.top = "14%";
+warningBanner.style.transform = "translate(-50%, -50%) scale(0.92)";
+warningBanner.style.padding = "10px 18px";
+warningBanner.style.border = "2px solid rgba(255,210,120,0.9)";
+warningBanner.style.background = "rgba(24,14,10,0.82)";
+warningBanner.style.color = "#ffe9c6";
+warningBanner.style.fontFamily = "Georgia, serif";
+warningBanner.style.fontSize = "22px";
+warningBanner.style.fontWeight = "700";
+warningBanner.style.letterSpacing = "0.04em";
+warningBanner.style.textShadow = "0 0 10px rgba(255,180,120,0.35)";
+warningBanner.style.opacity = "0";
+warningBanner.style.transition = "opacity 120ms linear, transform 140ms ease";
+warningBanner.style.pointerEvents = "none";
+warningBanner.style.zIndex = "16";
+warningBanner.textContent = "";
+document.body.appendChild(warningBanner);
+
 const hitFlash = document.createElement("div");
 hitFlash.style.position = "fixed";
 hitFlash.style.inset = "0";
@@ -140,6 +381,7 @@ const fxCtx = fxCanvas.getContext("2d");
 
 const keyState = Object.create(null);
 let attackQueued = false;
+let jumpQueued = false;
 let outcomeState = "none";
 let outcomePulse = 0;
 let previousOutcomeState = "none";
@@ -147,6 +389,7 @@ let hitFlashAlpha = 0;
 let cameraShakeTime = 0;
 let cameraShakeStrength = 0;
 let hitStopTimer = 0;
+let slamShockwaveTimer = 0;
 
 let audioCtx = null;
 let audioMaster = null;
@@ -155,6 +398,8 @@ let audioSfxGain = null;
 let musicStarted = false;
 let musicStep = 0;
 let musicIntervalId = null;
+const MUSIC_GAIN_TARGET = 0.85;
+const MAX_FX_PARTICLES = 220;
 
 const fxParticles = [];
 let winFireworkTimer = 0;
@@ -165,6 +410,10 @@ window.addEventListener("keydown", (event) => {
   keyState[event.code] = true;
   if (event.code === "KeyJ") {
     attackQueued = true;
+  }
+  if (event.code === "Space") {
+    event.preventDefault();
+    jumpQueued = true;
   }
   if (event.code === "KeyR") {
     resetBattle();
@@ -188,6 +437,8 @@ window.addEventListener("touchstart", () => {
 
 const tmpVecA = new THREE.Vector3();
 const tmpVecB = new THREE.Vector3();
+const tmpVecC = new THREE.Vector3();
+const tmpVecD = new THREE.Vector3();
 const upAxis = new THREE.Vector3(0, 1, 0);
 const moveInput = new THREE.Vector3();
 const cameraForward = new THREE.Vector3();
@@ -195,6 +446,19 @@ const cameraRight = new THREE.Vector3();
 const cameraDesiredPosition = new THREE.Vector3();
 const cameraLookTarget = new THREE.Vector3();
 const toEnemyFlat = new THREE.Vector3();
+const CAMERA_MAX_RADIUS = 18.6;
+
+function clampVectorXZ(vec, maxRadius) {
+  const lenSq = vec.x * vec.x + vec.z * vec.z;
+  const maxSq = maxRadius * maxRadius;
+  if (lenSq <= maxSq) {
+    return;
+  }
+  const len = Math.sqrt(lenSq);
+  const scale = maxRadius / len;
+  vec.x *= scale;
+  vec.z *= scale;
+}
 
 function resizeFxCanvas() {
   fxCanvas.width = window.innerWidth;
@@ -222,7 +486,7 @@ function ensureAudio() {
   audioMaster.connect(audioCtx.destination);
 
   audioMusicGain = audioCtx.createGain();
-  audioMusicGain.gain.value = 0.85;
+  audioMusicGain.gain.value = MUSIC_GAIN_TARGET;
   audioMusicGain.connect(audioMaster);
 
   audioSfxGain = audioCtx.createGain();
@@ -312,10 +576,14 @@ function playOutcomeStinger(kind) {
 }
 
 function startBackgroundMusic() {
-  if (!audioCtx || musicStarted) {
+  if (!audioCtx || musicIntervalId !== null) {
     return;
   }
   musicStarted = true;
+  const now = audioCtx.currentTime;
+  audioMusicGain.gain.cancelScheduledValues(now);
+  audioMusicGain.gain.setValueAtTime(Math.max(0.0001, audioMusicGain.gain.value), now);
+  audioMusicGain.gain.exponentialRampToValueAtTime(MUSIC_GAIN_TARGET, now + 0.45);
 
   const melody = [261.63, 311.13, 392.0, 466.16, 523.25, 466.16, 392.0, 349.23];
   const bass = [98.0, 110.0, 87.31, 98.0, 123.47, 110.0, 98.0, 87.31];
@@ -361,6 +629,23 @@ function startBackgroundMusic() {
   }, stepDuration * 1000);
 }
 
+function stopBackgroundMusic() {
+  if (!audioCtx || !audioMusicGain) {
+    return;
+  }
+
+  if (musicIntervalId !== null) {
+    window.clearInterval(musicIntervalId);
+    musicIntervalId = null;
+  }
+
+  const now = audioCtx.currentTime;
+  audioMusicGain.gain.cancelScheduledValues(now);
+  audioMusicGain.gain.setValueAtTime(Math.max(0.0001, audioMusicGain.gain.value), now);
+  audioMusicGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+  musicStarted = false;
+}
+
 function triggerHitImpact(strength, flashColor) {
   hitStopTimer = Math.max(hitStopTimer, 0.03 + strength * 0.02);
   cameraShakeTime = Math.max(cameraShakeTime, 0.11 + strength * 0.07);
@@ -370,6 +655,9 @@ function triggerHitImpact(strength, flashColor) {
 }
 
 function spawnFxParticle(x, y, vx, vy, life, size, color, gravity) {
+  if (fxParticles.length >= MAX_FX_PARTICLES) {
+    return;
+  }
   fxParticles.push({ x, y, vx, vy, life, maxLife: life, size, color, gravity: gravity || 0 });
 }
 
@@ -377,7 +665,7 @@ function spawnVictoryBurst() {
   const cx = fxCanvas.width * 0.5 + (Math.random() - 0.5) * (fxCanvas.width * 0.38);
   const cy = fxCanvas.height * (0.28 + Math.random() * 0.24);
   const colors = ["#ffe785", "#ffd26e", "#fff1bf", "#8fd7ff"];
-  for (let i = 0; i < 38; i += 1) {
+  for (let i = 0; i < 20; i += 1) {
     const angle = (i / 38) * Math.PI * 2;
     const speed = 90 + Math.random() * 220;
     spawnFxParticle(
@@ -386,7 +674,7 @@ function spawnVictoryBurst() {
       Math.cos(angle) * speed,
       Math.sin(angle) * speed,
       0.85 + Math.random() * 0.7,
-      2 + Math.random() * 3,
+      1.5 + Math.random() * 2.5,
       colors[i % colors.length],
       120
     );
@@ -402,7 +690,7 @@ function spawnDefeatDrift() {
     (Math.random() - 0.5) * 18,
     speed,
     1.8 + Math.random() * 1.4,
-    2 + Math.random() * 2,
+    1.5 + Math.random() * 1.5,
     "#8eb6d8",
     18
   );
@@ -429,9 +717,7 @@ function updateFxParticles(dt) {
     const alpha = Math.max(0, p.life / p.maxLife);
     fxCtx.globalAlpha = alpha;
     fxCtx.fillStyle = p.color;
-    fxCtx.beginPath();
-    fxCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-    fxCtx.fill();
+    fxCtx.fillRect(p.x - p.size * 0.5, p.y - p.size * 0.5, p.size, p.size);
   }
 
   fxCtx.globalAlpha = 1;
@@ -788,6 +1074,55 @@ function clampToArena(object3D, radius) {
   object3D.position.z = (object3D.position.z / len) * radius;
 }
 
+function computeChargeDistanceFrom(origin, dir, arenaRadius, maxDistance) {
+  const ox = origin.x;
+  const oz = origin.z;
+  const dx = dir.x;
+  const dz = dir.z;
+  const a = dx * dx + dz * dz;
+  const b = 2 * (ox * dx + oz * dz);
+  const c = ox * ox + oz * oz - arenaRadius * arenaRadius;
+  const disc = b * b - 4 * a * c;
+
+  if (disc <= 0 || a <= 1e-6) {
+    return maxDistance;
+  }
+
+  const sqrtDisc = Math.sqrt(disc);
+  const t1 = (-b - sqrtDisc) / (2 * a);
+  const t2 = (-b + sqrtDisc) / (2 * a);
+  let edgeDistance = maxDistance;
+
+  if (t1 > 0 && t1 < edgeDistance) {
+    edgeDistance = t1;
+  }
+  if (t2 > 0 && t2 < edgeDistance) {
+    edgeDistance = t2;
+  }
+
+  return Math.max(1.4, Math.min(maxDistance, edgeDistance - 0.3));
+}
+
+function beginMinotaurCharge(targetPosition) {
+  minotaur.state = "charge_windup";
+  minotaur.chargeWindup = 0.48;
+  minotaur.chargeCooldown = 5.2;
+  minotaur.attackCooldown = Math.max(minotaur.attackCooldown, 0.8);
+
+  minotaur.chargeOrigin.copy(minotaur.mesh.position);
+  minotaur.chargeDir.subVectors(targetPosition, minotaur.mesh.position);
+  minotaur.chargeDir.y = 0;
+  if (minotaur.chargeDir.lengthSq() < 1e-6) {
+    minotaur.chargeDir.set(Math.sin(minotaur.mesh.rotation.y), 0, Math.cos(minotaur.mesh.rotation.y));
+  } else {
+    minotaur.chargeDir.normalize();
+  }
+
+  minotaur.chargeDistance = computeChargeDistanceFrom(minotaur.chargeOrigin, minotaur.chargeDir, 15.4, 9.6);
+  minotaur.chargeRemaining = minotaur.chargeDistance;
+  minotaur.mesh.rotation.y = Math.atan2(minotaur.chargeDir.x, minotaur.chargeDir.z);
+}
+
 const heroVisual = createHeroPlaceholder();
 const minotaurVisual = createMinotaurPlaceholder();
 scene.add(heroVisual.root);
@@ -806,6 +1141,11 @@ const hero = {
   attackDuration: 0.36,
   attackCooldown: 0,
   attackDidHit: false,
+  stunTimer: 0,
+  jumpVelocity: 7.1,
+  gravity: 19,
+  verticalVelocity: 0,
+  isJumping: false,
   dead: false,
 };
 
@@ -821,6 +1161,24 @@ const minotaur = {
   attackDuration: 0.74,
   attackCooldown: 0,
   attackDidHit: false,
+  chargeWindup: 0,
+  chargeTimer: 0,
+  chargeCooldown: 0,
+  chargeDidHit: false,
+  chargeDir: new THREE.Vector3(0, 0, 1),
+  chargeOrigin: new THREE.Vector3(0, 0, 0),
+  chargeDistance: 9.6,
+  chargeRemaining: 0,
+  slamWindup: 0,
+  slamTimer: 0,
+  slamCooldown: 0,
+  slamDidHit: false,
+  aiDecisionTimer: 0,
+  strafeTimer: 0,
+  strafeDir: 1,
+  burstTimer: 0,
+  retreatTimer: 0,
+  desiredRange: 2.6,
   dead: false,
 };
 
@@ -830,6 +1188,9 @@ function resetBattle() {
   hero.attackTimer = 0;
   hero.attackCooldown = 0;
   hero.attackDidHit = false;
+  hero.stunTimer = 0;
+  hero.verticalVelocity = 0;
+  hero.isJumping = false;
   hero.state = "idle";
   hero.dead = false;
   hero.mesh.position.set(0, 0, 8);
@@ -840,6 +1201,24 @@ function resetBattle() {
   minotaur.attackTimer = 0;
   minotaur.attackCooldown = 0;
   minotaur.attackDidHit = false;
+  minotaur.chargeWindup = 0;
+  minotaur.chargeTimer = 0;
+  minotaur.chargeCooldown = 0;
+  minotaur.chargeDidHit = false;
+  minotaur.chargeDir.set(0, 0, 1);
+  minotaur.chargeOrigin.copy(minotaur.mesh.position);
+  minotaur.chargeDistance = 9.6;
+  minotaur.chargeRemaining = 0;
+  minotaur.slamWindup = 0;
+  minotaur.slamTimer = 0;
+  minotaur.slamCooldown = 0;
+  minotaur.slamDidHit = false;
+  minotaur.aiDecisionTimer = 0;
+  minotaur.strafeTimer = 0;
+  minotaur.strafeDir = Math.random() < 0.5 ? -1 : 1;
+  minotaur.burstTimer = 0;
+  minotaur.retreatTimer = 0;
+  minotaur.desiredRange = 2.6;
   minotaur.state = "idle";
   minotaur.dead = false;
   minotaur.mesh.position.set(0, 0, -7);
@@ -860,6 +1239,18 @@ function resetBattle() {
   outcomeText.style.transform = "translate(-50%, -50%) scale(0.9)";
   outcomeText.textContent = "";
   hitFlash.style.opacity = "0";
+  slamShockwaveTimer = 0;
+  slamRangeIndicator.visible = false;
+  chargeLaneIndicator.visible = false;
+  slamImpactRing.visible = false;
+  warningBanner.style.opacity = "0";
+  warningBanner.style.transform = "translate(-50%, -50%) scale(0.92)";
+  warningBanner.textContent = "";
+  jumpQueued = false;
+
+  if (audioCtx) {
+    startBackgroundMusic();
+  }
 
   statusEl.textContent = "전투 시작";
 }
@@ -902,8 +1293,41 @@ function takeMinotaurDamage(amount) {
   }
 }
 
+function updateHeroJump(dt) {
+  const canStartJump =
+    jumpQueued && !hero.isJumping && hero.attackTimer <= 0 && hero.hurtTimer <= 0 && !hero.dead;
+
+  if (canStartJump) {
+    hero.isJumping = true;
+    hero.verticalVelocity = hero.jumpVelocity;
+    jumpQueued = false;
+    playTone(480, audioCtx ? audioCtx.currentTime : 0, 0.08, 0.07, "triangle");
+  }
+
+  if (!hero.isJumping && hero.mesh.position.y <= 0) {
+    hero.mesh.position.y = 0;
+    hero.verticalVelocity = 0;
+    return;
+  }
+
+  hero.verticalVelocity -= hero.gravity * dt;
+  hero.mesh.position.y += hero.verticalVelocity * dt;
+
+  if (hero.mesh.position.y <= 0) {
+    hero.mesh.position.y = 0;
+    hero.verticalVelocity = 0;
+    hero.isJumping = false;
+  }
+}
+
 function tryHeroAttack() {
-  if (hero.dead || minotaur.dead || hero.attackCooldown > 0 || hero.attackTimer > 0) {
+  if (
+    hero.dead ||
+    minotaur.dead ||
+    hero.attackCooldown > 0 ||
+    hero.attackTimer > 0 ||
+    hero.isJumping
+  ) {
     return;
   }
   hero.state = "attack";
@@ -914,6 +1338,7 @@ function tryHeroAttack() {
 
 function performHeroHitCheck() {
   tmpVecA.subVectors(minotaur.mesh.position, hero.mesh.position);
+  tmpVecA.y = 0;
   const distance = tmpVecA.length();
   if (distance > 2.4) {
     return;
@@ -932,6 +1357,7 @@ function performHeroHitCheck() {
 
 function performMinotaurHitCheck() {
   tmpVecA.subVectors(hero.mesh.position, minotaur.mesh.position);
+  tmpVecA.y = 0;
   const distance = tmpVecA.length();
   if (distance > 2.9) {
     return;
@@ -945,6 +1371,53 @@ function performMinotaurHitCheck() {
   hero.mesh.position.addScaledVector(tmpVecA, 0.45);
   triggerHitImpact(0.92, "rgba(255,125,125,0.92)");
   playHitSound(true);
+}
+
+function performMinotaurChargeHitCheck() {
+  tmpVecA.subVectors(hero.mesh.position, minotaur.mesh.position);
+  tmpVecA.y = 0;
+  const distance = tmpVecA.length();
+  if (distance > 3.1) {
+    return;
+  }
+
+  tmpVecA.normalize();
+  tmpVecB.copy(minotaur.chargeDir);
+  if (tmpVecB.dot(tmpVecA) < 0.1) {
+    return;
+  }
+
+  takeHeroDamage(30);
+  hero.mesh.position.addScaledVector(tmpVecA, 0.95);
+  triggerHitImpact(1.05, "rgba(255,110,110,0.95)");
+  playHitSound(true);
+}
+
+function applyHeroStun(duration) {
+  hero.stunTimer = Math.max(hero.stunTimer, duration);
+}
+
+function performMinotaurSlamHitCheck() {
+  tmpVecA.subVectors(hero.mesh.position, minotaur.mesh.position);
+  tmpVecA.y = 0;
+  const distance = tmpVecA.length();
+  if (distance > 3.25) {
+    return;
+  }
+
+  if (distance > 1e-6) {
+    tmpVecA.multiplyScalar(1 / distance);
+  } else {
+    tmpVecA.set(0, 0, 1);
+  }
+
+  takeHeroDamage(20);
+  applyHeroStun(0.9);
+  slamShockwaveTimer = 0.42;
+  hero.mesh.position.addScaledVector(tmpVecA, 0.75);
+  triggerHitImpact(1.15, "rgba(255,95,95,0.96)");
+  playHitSound(true);
+  playNoiseBurst(audioCtx ? audioCtx.currentTime : 0, 0.14, 0.22);
 }
 
 function normalizeAngle(angle) {
@@ -994,6 +1467,31 @@ function animateHero(time, dt) {
   rig.leftArmLower.rotation.x = 0;
   rig.rightArmLower.rotation.x = 0;
 
+  if (hero.isJumping) {
+    rig.hips.position.y = 1.08;
+    rig.leftLegUpper.rotation.x = -0.28;
+    rig.rightLegUpper.rotation.x = -0.12;
+    rig.leftLegLower.rotation.x = 0.58;
+    rig.rightLegLower.rotation.x = 0.52;
+    rig.leftArmUpper.rotation.x = -0.18;
+    rig.rightArmUpper.rotation.x = -0.35;
+    rig.torso.rotation.y = 0;
+    rig.torso.rotation.z = 0;
+    rig.torso.rotation.x = -0.05;
+    return;
+  }
+
+  if (hero.state === "stun") {
+    rig.hips.position.y = 1.03;
+    rig.torso.rotation.z = Math.sin(time * 34) * 0.1;
+    rig.torso.rotation.x = -0.04;
+    rig.leftArmUpper.rotation.x = -0.35;
+    rig.rightArmUpper.rotation.x = -0.3;
+    rig.leftLegUpper.rotation.x = -0.08;
+    rig.rightLegUpper.rotation.x = 0.08;
+    return;
+  }
+
   if (hero.state === "hurt") {
     rig.torso.rotation.z = Math.sin(time * 70) * 0.07;
     return;
@@ -1042,7 +1540,7 @@ function animateMinotaur(time, dt) {
   rig.hips.rotation.x = 0;
   rig.hips.rotation.z = 0;
 
-  const runFactor = minotaur.state === "run" ? 1 : 0;
+  const runFactor = minotaur.state === "run" || minotaur.state === "strafe" ? 1 : 0;
   const cycle = Math.sin(time * 7);
   rig.hips.position.y = 1.3 + runFactor * Math.abs(cycle) * 0.06;
   rig.leftLegUpper.rotation.x = cycle * 0.65 * runFactor;
@@ -1052,6 +1550,8 @@ function animateMinotaur(time, dt) {
   rig.leftArmUpper.rotation.x = -cycle * 0.45 * runFactor;
   rig.rightArmUpper.rotation.x = cycle * 0.45 * runFactor;
   rig.torso.rotation.y = 0;
+  rig.torso.rotation.x = 0;
+  rig.head.rotation.x = 0;
 
   if (minotaur.state === "hurt") {
     rig.torso.rotation.z = Math.sin(time * 60) * 0.06;
@@ -1059,6 +1559,70 @@ function animateMinotaur(time, dt) {
   }
 
   rig.torso.rotation.z = 0;
+
+  if (minotaur.state === "charge_windup") {
+    rig.hips.position.y = 1.2;
+    rig.torso.rotation.x = 0.28;
+    rig.torso.rotation.y = 0;
+    rig.head.rotation.x = -0.18;
+    rig.leftArmUpper.rotation.x = -0.48;
+    rig.rightArmUpper.rotation.x = -0.62;
+    rig.leftLegUpper.rotation.x = -0.3;
+    rig.rightLegUpper.rotation.x = -0.3;
+    return;
+  }
+
+  if (minotaur.state === "charge") {
+    const gallop = Math.sin(time * 18);
+    rig.hips.position.y = 1.22 + Math.abs(gallop) * 0.08;
+    rig.torso.rotation.x = 0.15;
+    rig.head.rotation.x = -0.12;
+    rig.leftLegUpper.rotation.x = gallop * 0.95;
+    rig.rightLegUpper.rotation.x = -gallop * 0.95;
+    rig.leftLegLower.rotation.x = Math.max(0, -gallop) * 0.85;
+    rig.rightLegLower.rotation.x = Math.max(0, gallop) * 0.85;
+    rig.leftArmUpper.rotation.x = -0.45 - gallop * 0.25;
+    rig.rightArmUpper.rotation.x = -0.45 + gallop * 0.25;
+    return;
+  }
+
+  if (minotaur.state === "slam_windup") {
+    rig.hips.position.y = 1.28;
+    rig.torso.rotation.x = 0.12;
+    rig.leftArmUpper.rotation.x = -0.5;
+    rig.rightArmUpper.rotation.x = -0.6;
+    rig.leftArmLower.rotation.x = -0.25;
+    rig.rightArmLower.rotation.x = -0.3;
+    rig.leftLegUpper.rotation.x = -0.74;
+    rig.leftLegLower.rotation.x = 0.58;
+    rig.rightLegUpper.rotation.x = 0.26;
+    rig.rightLegLower.rotation.x = 0.08;
+    return;
+  }
+
+  if (minotaur.state === "slam") {
+    const progress = 1 - minotaur.slamTimer / 0.48;
+    if (progress < 0.58) {
+      const lift = progress / 0.58;
+      rig.hips.position.y = 1.3 - lift * 0.08;
+      rig.torso.rotation.x = 0.16 - lift * 0.08;
+      rig.leftLegUpper.rotation.x = -0.74 + lift * 0.18;
+      rig.leftLegLower.rotation.x = 0.58 - lift * 0.2;
+      rig.rightLegUpper.rotation.x = 0.24 + lift * 0.06;
+    } else {
+      const stomp = Math.min(1, (progress - 0.58) / 0.42);
+      rig.hips.position.y = 1.22 - stomp * 0.18;
+      rig.torso.rotation.x = 0.08 + stomp * 0.28;
+      rig.leftLegUpper.rotation.x = -0.56 + stomp * 1.18;
+      rig.leftLegLower.rotation.x = 0.38 - stomp * 0.56;
+      rig.rightLegUpper.rotation.x = 0.3 - stomp * 0.24;
+    }
+    rig.leftArmUpper.rotation.x = -0.45;
+    rig.rightArmUpper.rotation.x = -0.55;
+    rig.leftArmLower.rotation.x = -0.2;
+    rig.rightArmLower.rotation.x = -0.25;
+    return;
+  }
 
   if (minotaur.state === "attack") {
     const progress = 1 - minotaur.attackTimer / minotaur.attackDuration;
@@ -1077,13 +1641,49 @@ function animateMinotaur(time, dt) {
   }
 }
 
+function updateMinotaurAiTimers(dt) {
+  minotaur.aiDecisionTimer = Math.max(0, minotaur.aiDecisionTimer - dt);
+  minotaur.strafeTimer = Math.max(0, minotaur.strafeTimer - dt);
+  minotaur.burstTimer = Math.max(0, minotaur.burstTimer - dt);
+  minotaur.retreatTimer = Math.max(0, minotaur.retreatTimer - dt);
+  minotaur.chargeCooldown = Math.max(0, minotaur.chargeCooldown - dt);
+  minotaur.slamCooldown = Math.max(0, minotaur.slamCooldown - dt);
+
+  if (minotaur.aiDecisionTimer <= 0) {
+    minotaur.aiDecisionTimer = 0.4 + Math.random() * 0.35;
+    if (Math.random() < 0.55) {
+      minotaur.strafeDir *= -1;
+    }
+    minotaur.desiredRange = 2.35 + Math.random() * 0.7;
+  }
+
+  if (minotaur.strafeTimer <= 0) {
+    minotaur.strafeTimer = 0.6 + Math.random() * 0.8;
+    minotaur.strafeDir = Math.random() < 0.5 ? -1 : 1;
+  }
+}
+
 function updateHero(dt, time) {
   if (hero.dead) {
+    hero.isJumping = false;
+    hero.verticalVelocity = 0;
+    hero.mesh.position.y = 0;
+    jumpQueued = false;
     animateHero(time, dt);
     return;
   }
 
+  updateHeroJump(dt);
+
   hero.attackCooldown = Math.max(0, hero.attackCooldown - dt);
+
+  if (hero.stunTimer > 0) {
+    hero.stunTimer = Math.max(0, hero.stunTimer - dt);
+    hero.state = "stun";
+    jumpQueued = false;
+    animateHero(time, dt);
+    return;
+  }
 
   if (hero.hurtTimer > 0) {
     hero.hurtTimer = Math.max(0, hero.hurtTimer - dt);
@@ -1132,7 +1732,7 @@ function updateHero(dt, time) {
       hero.mesh.rotation.y = Math.atan2(tmpVecA.x, tmpVecA.z);
     }
   } else {
-    hero.state = "idle";
+    hero.state = hero.isJumping ? "jump" : "idle";
   }
 
   if (lockOnActive) {
@@ -1142,6 +1742,10 @@ function updateHero(dt, time) {
       const targetYaw = Math.atan2(toEnemyFlat.x, toEnemyFlat.z);
       hero.mesh.rotation.y = rotateYawToward(hero.mesh.rotation.y, targetYaw, dt * 8.2);
     }
+  }
+
+  if (hero.isJumping && hero.state !== "attack" && hero.state !== "hurt") {
+    hero.state = "jump";
   }
 
   animateHero(time, dt);
@@ -1184,10 +1788,76 @@ function updateMinotaur(dt, time) {
   }
 
   minotaur.attackCooldown = Math.max(0, minotaur.attackCooldown - dt);
+  updateMinotaurAiTimers(dt);
 
   if (minotaur.hurtTimer > 0) {
     minotaur.hurtTimer = Math.max(0, minotaur.hurtTimer - dt);
     minotaur.state = "hurt";
+    animateMinotaur(time, dt);
+    return;
+  }
+
+  if (minotaur.chargeWindup > 0) {
+    minotaur.state = "charge_windup";
+    minotaur.chargeWindup = Math.max(0, minotaur.chargeWindup - dt);
+    if (minotaur.chargeWindup <= 0) {
+      minotaur.state = "charge";
+      minotaur.chargeTimer = 0.92;
+      minotaur.chargeDidHit = false;
+      minotaur.chargeRemaining = minotaur.chargeDistance;
+    }
+    animateMinotaur(time, dt);
+    return;
+  }
+
+  if (minotaur.chargeTimer > 0) {
+    minotaur.state = "charge";
+    minotaur.chargeTimer = Math.max(0, minotaur.chargeTimer - dt);
+
+    const plannedStep = minotaur.speed * 2.2 * dt;
+    const step = Math.min(plannedStep, Math.max(0, minotaur.chargeRemaining));
+    const beforeX = minotaur.mesh.position.x;
+    const beforeZ = minotaur.mesh.position.z;
+    minotaur.mesh.position.addScaledVector(minotaur.chargeDir, step);
+    clampToArena(minotaur.mesh, 15.4);
+    const moved = Math.hypot(minotaur.mesh.position.x - beforeX, minotaur.mesh.position.z - beforeZ);
+    minotaur.chargeRemaining = Math.max(0, minotaur.chargeRemaining - moved);
+
+    if (moved < plannedStep * 0.35 || minotaur.chargeRemaining <= 0.02) {
+      minotaur.chargeTimer = 0;
+    }
+
+    if (!minotaur.chargeDidHit) {
+      performMinotaurChargeHitCheck();
+      if (hero.hurtTimer > 0 || hero.dead) {
+        minotaur.chargeDidHit = true;
+        minotaur.chargeTimer = Math.min(minotaur.chargeTimer, 0.2);
+      }
+    }
+    animateMinotaur(time, dt);
+    return;
+  }
+
+  if (minotaur.slamWindup > 0) {
+    minotaur.state = "slam_windup";
+    minotaur.slamWindup = Math.max(0, minotaur.slamWindup - dt);
+    if (minotaur.slamWindup <= 0) {
+      minotaur.state = "slam";
+      minotaur.slamTimer = 0.48;
+      minotaur.slamDidHit = false;
+    }
+    animateMinotaur(time, dt);
+    return;
+  }
+
+  if (minotaur.slamTimer > 0) {
+    minotaur.state = "slam";
+    minotaur.slamTimer = Math.max(0, minotaur.slamTimer - dt);
+    const slamProgress = 1 - minotaur.slamTimer / 0.48;
+    if (!minotaur.slamDidHit && slamProgress >= 0.62) {
+      minotaur.slamDidHit = true;
+      performMinotaurSlamHitCheck();
+    }
     animateMinotaur(time, dt);
     return;
   }
@@ -1205,21 +1875,88 @@ function updateMinotaur(dt, time) {
   }
 
   tmpVecA.subVectors(hero.mesh.position, minotaur.mesh.position);
+  tmpVecA.y = 0;
   const distance = tmpVecA.length();
+  if (distance > 1e-6) {
+    tmpVecA.multiplyScalar(1 / distance);
+  } else {
+    tmpVecA.set(0, 0, 1);
+  }
+  const facingYaw = Math.atan2(tmpVecA.x, tmpVecA.z);
+  minotaur.mesh.rotation.y = rotateYawToward(minotaur.mesh.rotation.y, facingYaw, dt * 6.5);
 
-  if (distance > 2.8) {
-    tmpVecA.normalize();
-    minotaur.mesh.position.addScaledVector(tmpVecA, minotaur.speed * dt);
-    minotaur.mesh.rotation.y = Math.atan2(tmpVecA.x, tmpVecA.z);
+  const pressureFactor = hero.attackTimer > 0 ? 1.12 : 1;
+  const canCharge =
+    minotaur.chargeCooldown <= 0 &&
+    distance > 5.0 &&
+    distance < 11.5 &&
+    hero.isJumping === false &&
+    hero.attackTimer <= 0;
+
+  const canSlam = minotaur.slamCooldown <= 0 && distance > 0.9 && distance < 4.6;
+  const closePressure = distance < 2.3;
+  const slamChance = closePressure ? 0.03 + dt * 1.7 : 0.012 + dt * 0.8;
+
+  if (canSlam && Math.random() < slamChance) {
+    minotaur.state = "slam_windup";
+    minotaur.slamWindup = 0.78;
+    minotaur.slamCooldown = closePressure ? 2.9 : 4.4;
+    minotaur.attackCooldown = Math.max(minotaur.attackCooldown, 0.9);
+    animateMinotaur(time, dt);
+    return;
+  }
+
+  if (canCharge && Math.random() < 0.008 + dt * 0.75) {
+    beginMinotaurCharge(hero.mesh.position);
+    animateMinotaur(time, dt);
+    return;
+  }
+
+  if (distance > minotaur.desiredRange + 2.6) {
+    if (minotaur.burstTimer <= 0 && Math.random() < 0.18) {
+      minotaur.burstTimer = 0.42;
+    }
+    const chaseSpeed = minotaur.speed * (minotaur.burstTimer > 0 ? 1.35 : 1.05) * pressureFactor;
+    minotaur.mesh.position.addScaledVector(tmpVecA, chaseSpeed * dt);
     minotaur.state = "run";
     clampToArena(minotaur.mesh, 15.4);
+  } else if (distance > minotaur.desiredRange + 0.45) {
+    tmpVecC.crossVectors(tmpVecA, upAxis).normalize();
+    const forwardStep = minotaur.speed * 0.62;
+    const strafeStep = minotaur.speed * 0.92;
+    minotaur.mesh.position.addScaledVector(tmpVecA, forwardStep * dt);
+    minotaur.mesh.position.addScaledVector(tmpVecC, strafeStep * minotaur.strafeDir * dt);
+    minotaur.state = "strafe";
+    clampToArena(minotaur.mesh, 15.4);
+  } else if (distance < minotaur.desiredRange - 0.65) {
+    if (minotaur.retreatTimer <= 0 && Math.random() < 0.35) {
+      minotaur.retreatTimer = 0.28 + Math.random() * 0.28;
+    }
+    if (minotaur.retreatTimer > 0) {
+      tmpVecC.crossVectors(tmpVecA, upAxis).normalize();
+      const retreatSpeed = minotaur.speed * 0.75;
+      minotaur.mesh.position.addScaledVector(tmpVecA, -retreatSpeed * dt);
+      minotaur.mesh.position.addScaledVector(tmpVecC, minotaur.strafeDir * retreatSpeed * 0.55 * dt);
+      minotaur.state = "strafe";
+      clampToArena(minotaur.mesh, 15.4);
+    } else if (minotaur.attackCooldown <= 0) {
+      minotaur.state = "attack";
+      minotaur.attackTimer = minotaur.attackDuration;
+      minotaur.attackCooldown = 1.05 + Math.random() * 0.55;
+      minotaur.attackDidHit = false;
+    } else {
+      minotaur.state = "idle";
+    }
   } else if (minotaur.attackCooldown <= 0) {
     minotaur.state = "attack";
     minotaur.attackTimer = minotaur.attackDuration;
-    minotaur.attackCooldown = 1.55;
+    minotaur.attackCooldown = 1.0 + Math.random() * 0.45;
     minotaur.attackDidHit = false;
   } else {
-    minotaur.state = "idle";
+    tmpVecC.crossVectors(tmpVecA, upAxis).normalize();
+    minotaur.mesh.position.addScaledVector(tmpVecC, minotaur.strafeDir * minotaur.speed * 0.65 * dt);
+    minotaur.state = "strafe";
+    clampToArena(minotaur.mesh, 15.4);
   }
 
   animateMinotaur(time, dt);
@@ -1248,6 +1985,7 @@ function updateCamera() {
       .addScaledVector(toEnemyFlat, -7.4)
       .addScaledVector(cameraRight, 1.2);
     cameraDesiredPosition.y = hero.mesh.position.y + 4.6;
+    clampVectorXZ(cameraDesiredPosition, CAMERA_MAX_RADIUS);
 
     cameraLookTarget
       .copy(hero.mesh.position)
@@ -1264,6 +2002,7 @@ function updateCamera() {
 
   tmpVecA.set(0, 5.4, 8.6).applyAxisAngle(upAxis, hero.mesh.rotation.y);
   tmpVecB.copy(hero.mesh.position).add(tmpVecA);
+  clampVectorXZ(tmpVecB, CAMERA_MAX_RADIUS);
   camera.position.lerp(tmpVecB, 0.09);
   camera.position.x += shakeOffsetX;
   camera.position.y += shakeOffsetY;
@@ -1284,6 +2023,7 @@ window.__AegisTestAPI = {
     }
     updateCombatFeedback(dt);
     updateCamera();
+    updateSkillTelegraphs(dt, time);
     updateHud();
     updateOutcomeEffects(dt, time);
   },
@@ -1350,6 +2090,14 @@ function updateHud() {
   if (!hero.dead && !minotaur.dead) {
     if (hero.attackTimer > 0) {
       setStatus("영웅 공격 중");
+    } else if (minotaur.state === "slam_windup") {
+      setStatus("미노타우르스 지면 강타 준비!");
+    } else if (minotaur.state === "slam") {
+      setStatus("충격파 범위 이탈!");
+    } else if (minotaur.state === "charge_windup") {
+      setStatus("미노타우르스 돌격 준비!");
+    } else if (minotaur.state === "charge") {
+      setStatus("돌격 회피!");
     } else if (minotaur.attackTimer > 0) {
       setStatus("미노타우르스 공격 대비");
     } else if (hero.state === "run") {
@@ -1374,16 +2122,82 @@ function updateCombatFeedback(dt) {
   }
 }
 
+function updateSkillTelegraphs(dt, elapsed) {
+  const showSlamWarning = minotaur.state === "slam_windup";
+  const showChargeWarning = minotaur.state === "charge_windup";
+  const showChargeActive = minotaur.state === "charge";
+
+  if (showSlamWarning) {
+    const pulse = 0.78 + Math.sin(elapsed * 18) * 0.16;
+    slamRangeIndicator.visible = true;
+    slamRangeIndicator.position.x = minotaur.mesh.position.x;
+    slamRangeIndicator.position.z = minotaur.mesh.position.z;
+    slamRangeIndicator.material.opacity = pulse;
+    warningBanner.style.opacity = "1";
+    warningBanner.style.transform = "translate(-50%, -50%) scale(1)";
+    warningBanner.style.borderColor = "rgba(255,110,110,0.92)";
+    warningBanner.style.background = "rgba(42,12,12,0.84)";
+    warningBanner.style.color = "#ffd0d0";
+    warningBanner.textContent = "지면 강타 주의";
+  } else {
+    slamRangeIndicator.visible = false;
+  }
+
+  if (showChargeWarning || showChargeActive) {
+    const pulse = showChargeWarning ? 0.62 + Math.sin(elapsed * 14) * 0.15 : 0.56;
+    chargeLaneIndicator.visible = true;
+    const dir = tmpVecC.copy(minotaur.chargeDir).normalize();
+    const laneLength = Math.max(1.6, minotaur.chargeDistance || 9.6);
+    tmpVecD.copy(minotaur.chargeOrigin).addScaledVector(dir, laneLength);
+    chargeLaneIndicator.scale.set(1, laneLength, 1);
+    chargeLaneIndicator.position.copy(minotaur.chargeOrigin).lerp(tmpVecD, 0.5);
+    chargeLaneIndicator.position.y = 0.05;
+    chargeLaneIndicator.rotation.y = Math.atan2(dir.x, dir.z);
+    chargeLaneIndicator.material.opacity = pulse;
+
+    if (!showSlamWarning) {
+      warningBanner.style.opacity = "1";
+      warningBanner.style.transform = "translate(-50%, -50%) scale(1)";
+      warningBanner.style.borderColor = "rgba(255,186,116,0.92)";
+      warningBanner.style.background = "rgba(45,24,8,0.84)";
+      warningBanner.style.color = "#ffe6c8";
+      warningBanner.textContent = showChargeWarning ? "돌진 준비" : "돌진! 옆으로 회피";
+    }
+  } else {
+    chargeLaneIndicator.visible = false;
+  }
+
+  if (!showSlamWarning && !showChargeWarning && !showChargeActive) {
+    warningBanner.style.opacity = "0";
+    warningBanner.style.transform = "translate(-50%, -50%) scale(0.92)";
+    warningBanner.textContent = "";
+  }
+
+  if (slamShockwaveTimer > 0) {
+    slamShockwaveTimer = Math.max(0, slamShockwaveTimer - dt);
+    const progress = 1 - slamShockwaveTimer / 0.42;
+    slamImpactRing.visible = true;
+    slamImpactRing.position.x = minotaur.mesh.position.x;
+    slamImpactRing.position.z = minotaur.mesh.position.z;
+    slamImpactRing.scale.setScalar(1 + progress * 5.2);
+    slamImpactRing.material.opacity = Math.max(0, 0.88 - progress * 0.88);
+  } else {
+    slamImpactRing.visible = false;
+  }
+}
+
 function updateOutcomeEffects(dt, elapsed) {
   if (outcomeState !== previousOutcomeState) {
     if (outcomeState === "win") {
+      stopBackgroundMusic();
       playOutcomeStinger("win");
-      for (let i = 0; i < 2; i += 1) {
+      for (let i = 0; i < 1; i += 1) {
         spawnVictoryBurst();
       }
     } else if (outcomeState === "lose") {
+      stopBackgroundMusic();
       playOutcomeStinger("lose");
-      for (let i = 0; i < 45; i += 1) {
+      for (let i = 0; i < 24; i += 1) {
         spawnDefeatDrift();
       }
     }
@@ -1421,7 +2235,7 @@ function updateOutcomeEffects(dt, elapsed) {
   loseDriftTimer -= dt;
   if (loseDriftTimer <= 0) {
     spawnDefeatDrift();
-    loseDriftTimer = 0.05;
+    loseDriftTimer = 0.1;
   }
 
   outcomeOverlay.style.background =
@@ -1449,6 +2263,7 @@ function tick() {
 
   updateCombatFeedback(dt);
   updateCamera();
+  updateSkillTelegraphs(dt, elapsed);
   updateHud();
   updateOutcomeEffects(dt, elapsed);
 
@@ -1463,7 +2278,7 @@ window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.2));
   resizeFxCanvas();
 });
 
